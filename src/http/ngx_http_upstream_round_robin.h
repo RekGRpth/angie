@@ -18,7 +18,7 @@
 #define NGX_HTTP_UPSTREAM_SID_LEN   32
 
 
-#if (NGX_API)
+#if (NGX_API && NGX_HTTP_UPSTREAM_ZONE)
 
 typedef struct {
     ngx_atomic_uint_t  keepalive;
@@ -29,7 +29,7 @@ typedef struct {
     uint64_t                        requests;
     uint64_t                        fails;
     uint64_t                        unavailable;
-    uint64_t                        responses[501];
+    uint64_t                       *responses;
     uint64_t                        sent;
     uint64_t                        received;
     time_t                          selected;
@@ -101,13 +101,11 @@ struct ngx_http_upstream_rr_peer_s {
 #if (NGX_HTTP_UPSTREAM_ZONE)
     ngx_uint_t                      refs;
     ngx_http_upstream_host_t       *host;
-#endif
 
 #if (NGX_API)
     ngx_http_upstream_peer_stats_t  stats;
 #endif
 
-#if (NGX_HTTP_UPSTREAM_ZONE)
     unsigned                        zombie:1;
 #endif
 
@@ -140,13 +138,13 @@ struct ngx_http_upstream_rr_peers_s {
 #if (NGX_HTTP_UPSTREAM_ZONE)
     ngx_uint_t                     *generation;
     ngx_http_upstream_rr_peer_t    *resolve;
-#endif
 
 #if (NGX_API)
     ngx_http_upstream_stats_t       stats;
 #endif
 
     ngx_uint_t                      zombies;
+#endif
 };
 
 
@@ -199,6 +197,9 @@ ngx_http_upstream_rr_peer_free_locked(ngx_http_upstream_rr_peers_t *peers,
 
     ngx_slab_free_locked(peers->shpool, peer->sockaddr);
     ngx_slab_free_locked(peers->shpool, peer->name.data);
+#if (NGX_API)
+    ngx_slab_free_locked(peers->shpool, peer->stats.responses);
+#endif
 
     if (peer->server.data) {
         ngx_slab_free_locked(peers->shpool, peer->server.data);

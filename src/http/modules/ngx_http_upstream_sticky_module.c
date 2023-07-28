@@ -223,7 +223,7 @@ again:
             peer->checked = now;
         }
 
-#if (NGX_API)
+#if (NGX_API && NGX_HTTP_UPSTREAM_ZONE)
         peer->stats.requests++;
         peer->stats.selected = now;
 #endif
@@ -539,10 +539,18 @@ ngx_http_upstream_sticky_create_conf(ngx_conf_t *cf)
         return NULL;
     }
 
-    ngx_array_init(&conf->cookie_attrs, cf->pool, 4,
-                   sizeof(ngx_http_complex_value_t));
+    if (ngx_array_init(&conf->cookie_attrs, cf->pool, 4,
+                       sizeof(ngx_http_complex_value_t))
+        != NGX_OK)
+    {
+        return NULL;
+    }
 
-    ngx_array_init(&conf->lookup_vars, cf->pool, 4, sizeof(ngx_uint_t));
+    if (ngx_array_init(&conf->lookup_vars, cf->pool, 4, sizeof(ngx_uint_t))
+        != NGX_OK)
+    {
+        return NULL;
+    }
 
     conf->strict = NGX_CONF_UNSET;
     conf->secret = NGX_CONF_UNSET_PTR;
