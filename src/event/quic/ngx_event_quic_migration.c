@@ -1,5 +1,6 @@
 
 /*
+ * Copyright (C) 2023 Web Server LLC
  * Copyright (C) Nginx, Inc.
  */
 
@@ -155,13 +156,7 @@ valid:
     }
 
     if (rst) {
-        ngx_memzero(&qc->congestion, sizeof(ngx_quic_congestion_t));
-
-        qc->congestion.window = ngx_min(10 * qc->tp.max_udp_payload_size,
-                                   ngx_max(2 * qc->tp.max_udp_payload_size,
-                                           14720));
-        qc->congestion.ssthresh = (size_t) -1;
-        qc->congestion.recovery_start = ngx_current_msec;
+        ngx_quic_congestion_reset(qc);
     }
 
     /*
@@ -280,7 +275,7 @@ ngx_quic_set_path(ngx_connection_t *c, ngx_quic_header_t *pkt)
 
     len = pkt->raw->last - pkt->raw->start;
 
-    if (c->udp->buffer == NULL) {
+    if (c->udp->buffer == NULL && !qc->client) {
         /* first ever packet in connection, path already exists  */
         path = qc->path;
         goto update;
@@ -591,9 +586,9 @@ ngx_quic_discover_path_mtu(ngx_connection_t *c, ngx_quic_path_t *path)
     } else {
         path->mtud = path->mtu * 2;
 
-        if (path->mtud >= qc->ctp.max_udp_payload_size) {
-            path->mtud = qc->ctp.max_udp_payload_size;
-            path->max_mtu = qc->ctp.max_udp_payload_size;
+        if (path->mtud >= qc->peer_tp.max_udp_payload_size) {
+            path->mtud = qc->peer_tp.max_udp_payload_size;
+            path->max_mtu = qc->peer_tp.max_udp_payload_size;
         }
     }
 

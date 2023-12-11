@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2023 Web Server LLC
  * Copyright (C) Nginx, Inc.
  */
 
@@ -128,6 +129,18 @@ struct ngx_quic_socket_s {
 
 
 typedef struct {
+    uint64_t                          max;
+    uint64_t                          count;
+} ngx_quic_stream_ctl_t;
+
+
+typedef struct {
+    ngx_quic_stream_ctl_t             uni;
+    ngx_quic_stream_ctl_t             bidi;
+} ngx_quic_stream_peer_t;
+
+
+typedef struct {
     ngx_rbtree_t                      tree;
     ngx_rbtree_node_t                 sentinel;
 
@@ -142,15 +155,8 @@ typedef struct {
     uint64_t                          send_offset;
     uint64_t                          send_max_data;
 
-    uint64_t                          server_max_streams_uni;
-    uint64_t                          server_max_streams_bidi;
-    uint64_t                          server_streams_uni;
-    uint64_t                          server_streams_bidi;
-
-    uint64_t                          client_max_streams_uni;
-    uint64_t                          client_max_streams_bidi;
-    uint64_t                          client_streams_uni;
-    uint64_t                          client_streams_bidi;
+    ngx_quic_stream_peer_t            server;
+    ngx_quic_stream_peer_t            client;
 
     ngx_uint_t                        initialized;
                                                  /* unsigned  initialized:1; */
@@ -218,7 +224,7 @@ struct ngx_quic_connection_s {
     uint64_t                          path_seqnum;
 
     ngx_quic_tp_t                     tp;
-    ngx_quic_tp_t                     ctp;
+    ngx_quic_tp_t                     peer_tp;
 
     ngx_quic_send_ctx_t               send_ctx[NGX_QUIC_SEND_CTX_LAST];
 
@@ -269,6 +275,13 @@ struct ngx_quic_connection_s {
     ngx_uint_t                        shutdown_code;
     const char                       *shutdown_reason;
 
+    u_char                            incid[NGX_QUIC_SERVER_CID_LEN];
+
+    ngx_str_t                         client_retry;
+    ngx_str_t                         client_new_token;
+    ngx_quic_init_ssl_pt              init_ssl;
+    void                             *init_ssl_data;
+
     unsigned                          error_app:1;
     unsigned                          send_timer_set:1;
     unsigned                          closing:1;
@@ -277,11 +290,14 @@ struct ngx_quic_connection_s {
     unsigned                          key_phase:1;
     unsigned                          validated:1;
     unsigned                          client_tp_done:1;
+    unsigned                          server_id_known:1;
+    unsigned                          client:1;
+    unsigned                          switch_keys:1;
 };
 
 
 ngx_int_t ngx_quic_apply_transport_params(ngx_connection_t *c,
-    ngx_quic_tp_t *ctp);
+    ngx_quic_tp_t *peer_tp);
 void ngx_quic_discard_ctx(ngx_connection_t *c,
     enum ssl_encryption_level_t level);
 void ngx_quic_close_connection(ngx_connection_t *c, ngx_int_t rc);

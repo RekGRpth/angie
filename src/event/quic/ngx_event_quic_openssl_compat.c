@@ -1,5 +1,6 @@
 
 /*
+ * Copyright (C) 2023 Web Server LLC
  * Copyright (C) Nginx, Inc.
  */
 
@@ -49,7 +50,7 @@ struct ngx_quic_compat_s {
     ngx_quic_compat_keys_t        keys;
 
     ngx_str_t                     tp;
-    ngx_str_t                     ctp;
+    ngx_str_t                     peer_tp;
 };
 
 
@@ -207,6 +208,10 @@ ngx_quic_compat_keylog_callback(const SSL *ssl, const char *line)
     com = qc->compat;
     cipher = SSL_get_current_cipher(ssl);
 
+    if (qc->client) {
+        write = !write;
+    }
+
     if (write) {
         com->method->set_write_secret((SSL *) ssl, level, cipher, secret, n);
         com->write_level = level;
@@ -355,8 +360,8 @@ ngx_quic_compat_parse_transport_params_callback(SSL *ssl, unsigned int ext_type,
 
     ngx_memcpy(p, in, inlen);
 
-    com->ctp.data = p;
-    com->ctp.len = inlen;
+    com->peer_tp.data = p;
+    com->peer_tp.len = inlen;
 
     return 1;
 }
@@ -644,8 +649,8 @@ SSL_get_peer_quic_transport_params(const SSL *ssl, const uint8_t **out_params,
     qc = ngx_quic_get_connection(c);
     com = qc->compat;
 
-    *out_params = com->ctp.data;
-    *out_params_len = com->ctp.len;
+    *out_params = com->peer_tp.data;
+    *out_params_len = com->peer_tp.len;
 }
 
 #endif /* NGX_QUIC_OPENSSL_COMPAT */
