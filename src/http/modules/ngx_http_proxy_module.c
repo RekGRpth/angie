@@ -5976,7 +5976,7 @@ ngx_http_v3_create_headers_frame(ngx_http_request_t *r, ngx_buf_t *hbuf)
 
     b = ngx_create_temp_buf(r->pool, len);
     if (b == NULL) {
-        return NULL;
+        return NGX_CHAIN_ERROR;
     }
 
     b->last = (u_char *) ngx_http_v3_encode_varlen_int(b->last,
@@ -5989,7 +5989,7 @@ ngx_http_v3_create_headers_frame(ngx_http_request_t *r, ngx_buf_t *hbuf)
 
     cl = ngx_alloc_chain_link(r->pool);
     if (cl == NULL) {
-        return NULL;
+        return NGX_CHAIN_ERROR;
     }
 
     cl->buf = b;
@@ -5997,7 +5997,7 @@ ngx_http_v3_create_headers_frame(ngx_http_request_t *r, ngx_buf_t *hbuf)
 
     cl = ngx_alloc_chain_link(r->pool);
     if (cl == NULL) {
-        return NULL;
+        return NGX_CHAIN_ERROR;
     }
 
     cl->buf = hbuf;
@@ -6814,6 +6814,9 @@ ngx_http_v3_proxy_process_status_line(ngx_http_request_t *r)
     ngx_http_proxy_ctx_t         *ctx;
     ngx_http_v3_session_t        *h3c;
     ngx_http_v3_parse_headers_t  *st;
+#if (NGX_HTTP_CACHE)
+    ngx_connection_t              stub;
+#endif
 
     u = r->upstream;
     c = u->peer.connection;
@@ -6828,8 +6831,6 @@ ngx_http_v3_proxy_process_status_line(ngx_http_request_t *r)
 
 #if (NGX_HTTP_CACHE)
     if (r->cache) {
-        ngx_connection_t  stub;
-
         /* no connection here */
         h3c = NULL;
         ngx_memzero(&stub, sizeof(ngx_connection_t));
