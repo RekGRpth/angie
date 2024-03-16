@@ -7,6 +7,65 @@
 
 <changes ver="1.5.0" date="">
 
+<change type="feature">
+<para lang="ru">
+настройка автоматического перенаправления для добавления слеша в конец URI
+запроса с помощью директивы "auto_redirect".
+</para>
+<para lang="en">
+configuration of automatic redirection, which adds trailing slashes to request
+URIs, with the "auto_redirect" directive.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+вывод содержащих даты метрик в формате временных меток Unix вместо ISO 8601
+для использования в Prometheus, а также в JSON API при запросе с аргументом
+"?date=epoch".
+</para>
+<para lang="en">
+output statistics metrics with dates in Epoch format instead of ISO 8601 for
+use in Prometheus and optionally in the JSON API with the "?date=epoch" request
+argument.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+новый статус "recovering" у проксируемых серверов в API статистики, означающий,
+что сервер медленно восстанавливается после сбоя согласно опции "slow_start".
+</para>
+<para lang="en">
+new "recovering" state for upstream peers in the statistics API, indicating that
+a peer is slowly starting up after a failure, as suggested by the "slow_start"
+option.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+вся функциональность nginx 1.25.4.
+</para>
+<para lang="en">
+all functionality of nginx 1.25.4.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+если был зайдествован механизм переиспользования SSL-сессий
+("proxy_ssl_session_reuse"), то при динамическом обновлении списка
+проксируемых серверов могла происходить утечка из зоны разделяемой
+памяти ("zone"), настроенной для соответствующего блока "upstream".
+</para>
+<para lang="en">
+if the SSL session reuse mechanism "proxy_ssl_session_reuse" was used and
+the list of proxied servers was dynamically updated, a leak could occur in
+the shared memory zone configured for the corresponding "upstream" block.
+</para>
+</change>
+
 </changes>
 
 

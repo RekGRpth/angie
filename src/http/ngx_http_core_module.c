@@ -1,6 +1,6 @@
 
 /*
- * Copyright (C) 2022-2023 Web Server LLC
+ * Copyright (C) 2022-2024 Web Server LLC
  * Copyright (C) Igor Sysoev
  * Copyright (C) Nginx, Inc.
  */
@@ -20,6 +20,11 @@ typedef struct {
 #define NGX_HTTP_REQUEST_BODY_FILE_OFF    0
 #define NGX_HTTP_REQUEST_BODY_FILE_ON     1
 #define NGX_HTTP_REQUEST_BODY_FILE_CLEAN  2
+
+
+#define NGX_HTTP_AUTO_REDIRECT_OFF        0
+#define NGX_HTTP_AUTO_REDIRECT_ON         1
+#define NGX_HTTP_AUTO_REDIRECT_DEFAULT    2
 
 
 static ngx_int_t ngx_http_core_auth_delay(ngx_http_request_t *r);
@@ -157,6 +162,14 @@ static ngx_conf_bitmask_t  ngx_http_core_keepalive_disable[] = {
     { ngx_string("none"), NGX_HTTP_KEEPALIVE_DISABLE_NONE },
     { ngx_string("msie6"), NGX_HTTP_KEEPALIVE_DISABLE_MSIE6 },
     { ngx_string("safari"), NGX_HTTP_KEEPALIVE_DISABLE_SAFARI },
+    { ngx_null_string, 0 }
+};
+
+
+static ngx_conf_enum_t  ngx_http_core_auto_redirect[] = {
+    { ngx_string("off"), NGX_HTTP_AUTO_REDIRECT_OFF },
+    { ngx_string("on"), NGX_HTTP_AUTO_REDIRECT_ON },
+    { ngx_string("default"), NGX_HTTP_AUTO_REDIRECT_DEFAULT },
     { ngx_null_string, 0 }
 };
 
@@ -678,6 +691,13 @@ static ngx_command_t  ngx_http_core_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_core_loc_conf_t, etag),
       NULL },
+
+    { ngx_string("auto_redirect"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_enum_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_core_loc_conf_t, set_auto_redirect),
+      &ngx_http_core_auto_redirect },
 
     { ngx_string("error_page"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
@@ -3800,6 +3820,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t *cf)
     clcf->recursive_error_pages = NGX_CONF_UNSET;
     clcf->chunked_transfer_encoding = NGX_CONF_UNSET;
     clcf->etag = NGX_CONF_UNSET;
+    clcf->set_auto_redirect = NGX_CONF_UNSET_UINT;
     clcf->server_tokens = NGX_CONF_UNSET_UINT;
     clcf->types_hash_max_size = NGX_CONF_UNSET_UINT;
     clcf->types_hash_bucket_size = NGX_CONF_UNSET_UINT;
@@ -4080,6 +4101,15 @@ ngx_http_core_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
                               prev->chunked_transfer_encoding, 1);
     ngx_conf_merge_value(conf->etag, prev->etag, 1);
 
+    ngx_conf_merge_uint_value(conf->set_auto_redirect,
+                              prev->set_auto_redirect,
+                              NGX_HTTP_AUTO_REDIRECT_DEFAULT);
+
+    if (conf->set_auto_redirect != NGX_HTTP_AUTO_REDIRECT_DEFAULT) {
+        /* overriding value set by some directives */
+        conf->auto_redirect = conf->set_auto_redirect;
+    }
+
     ngx_conf_merge_uint_value(conf->server_tokens, prev->server_tokens,
                               NGX_HTTP_SERVER_TOKENS_ON);
 
@@ -4147,7 +4177,7 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     ngx_str_t              *value, size;
     ngx_url_t               u;
-    ngx_uint_t              n, i;
+    ngx_uint_t              n, i, backlog;
     ngx_http_listen_opt_t   lsopt;
 
     cscf->listen = 1;
@@ -4185,6 +4215,8 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 #if (NGX_HAVE_INET6)
     lsopt.ipv6only = 1;
 #endif
+
+    backlog = 0;
 
     for (n = 2; n < cf->args->nelts; n++) {
 
@@ -4243,6 +4275,8 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
                                    "invalid backlog \"%V\"", &value[n]);
                 return NGX_CONF_ERROR;
             }
+
+            backlog = 1;
 
             continue;
         }
@@ -4491,9 +4525,29 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
-#if (NGX_HTTP_V3)
-
     if (lsopt.quic) {
+#if (NGX_HAVE_TCP_FASTOPEN)
+        if (lsopt.fastopen != -1) {
+            return "\"fastopen\" parameter is incompatible with \"quic\"";
+        }
+#endif
+
+        if (backlog) {
+            return "\"backlog\" parameter is incompatible with \"quic\"";
+        }
+
+#if (NGX_HAVE_DEFERRED_ACCEPT && defined SO_ACCEPTFILTER)
+        if (lsopt.accept_filter) {
+            return "\"accept_filter\" parameter is incompatible with \"quic\"";
+        }
+#endif
+
+#if (NGX_HAVE_DEFERRED_ACCEPT && defined TCP_DEFER_ACCEPT)
+        if (lsopt.deferred_accept) {
+            return "\"deferred\" parameter is incompatible with \"quic\"";
+        }
+#endif
+
 #if (NGX_HTTP_SSL)
         if (lsopt.ssl) {
             return "\"ssl\" parameter is incompatible with \"quic\"";
@@ -4506,12 +4560,14 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         }
 #endif
 
+        if (lsopt.so_keepalive) {
+            return "\"so_keepalive\" parameter is incompatible with \"quic\"";
+        }
+
         if (lsopt.proxy_protocol) {
             return "\"proxy_protocol\" parameter is incompatible with \"quic\"";
         }
     }
-
-#endif
 
     for (n = 0; n < u.naddrs; n++) {
 
