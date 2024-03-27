@@ -5,7 +5,21 @@
 <change_log title="Angie">
 
 
-<changes ver="1.5.0" date="">
+<changes ver="1.5.0" date="2024-03-27">
+
+<change type="feature">
+<para lang="ru">
+начальная поддержка автоматического получения и обновления сертификатов
+по протоколу ACME, конфигурируемая с помощью директив "acme_client" и "acme",
+а также переменных вида "$acme_cert_*" и "$acme_cert_key_*".
+</para>
+<para lang="en">
+basic support for automatically obtaining and updating certificates
+using the ACME protocol, configurable with the "acme_client" and "acme"
+directives, as well as variables of the form "$acme_cert_*"
+and "$acme_cert_key_*".
+</para>
+</change>
 
 <change type="feature">
 <para lang="ru">
