@@ -1,6 +1,6 @@
 
 /*
- * Copyright (C) 2023 Web Server LLC
+ * Copyright (C) 2023-2024 Web Server LLC
  * Copyright (C) Igor Sysoev
  * Copyright (C) Nginx, Inc.
  */
@@ -229,10 +229,10 @@ ngx_stream_upstream_init_round_robin_peers(ngx_conf_t *cf,
         {
             n += server[i].naddrs;
             w += server[i].naddrs * server[i].weight;
-        }
 
-        if (!server[i].down) {
-            t += server[i].naddrs;
+            if (!server[i].down) {
+                t += server[i].naddrs;
+            }
         }
     }
 
@@ -871,6 +871,13 @@ ngx_stream_upstream_notify_round_robin_peer(ngx_peer_connection_t *pc,
         ngx_stream_upstream_rr_peer_lock(rrp->peers, peer);
 
         if (peer->accessed < peer->checked) {
+
+            if (peer->slow_start
+                && peer->max_fails && peer->fails >= peer->max_fails)
+            {
+                peer->slow_time = ngx_current_msec;
+            }
+
             peer->fails = 0;
         }
 
