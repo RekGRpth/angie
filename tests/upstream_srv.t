@@ -8,7 +8,6 @@
 
 use warnings;
 use strict;
-#use Data::Dumper;
 
 use Test::More;
 
@@ -16,14 +15,12 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
 use Test::Nginx qw/http_start http_get http_end port/;
+use Test::Utils qw/get_json/;
 
 ###############################################################################
 
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
-
-eval { require JSON::PP; };
-plan(skip_all => "JSON::PP not installed") if $@;
 
 # the test depends on availability of 127.0.0.0/8 subnet on targets
 plan(skip_all => 'OS is not linux') if $^O ne 'linux';
@@ -104,7 +101,7 @@ no-dhcp-interface=
 no-hosts
 # do not read /etc/resolv.conf
 no-resolv
-# take records from this fil
+# take records from this file
 addn-hosts=%%TESTDIR%%/test_hosts
 
 # SRV records
@@ -129,7 +126,7 @@ no-dhcp-interface=
 no-hosts
 # do not read /etc/resolv.conf
 no-resolv
-# take records from this fil
+# take records from this file
 addn-hosts=%%TESTDIR%%/test_hosts2
 
 # return NXDOMAIN for this
@@ -154,7 +151,7 @@ no-dhcp-interface=
 no-hosts
 # do not read /etc/resolv.conf
 no-resolv
-# take records from this fil
+# take records from this file
 addn-hosts=%%TESTDIR%%/test_hosts2
 
 # return NXDOMAIN for this
@@ -164,27 +161,26 @@ EOF
 
 my $dconf = $t->testdir()."/dns.conf";
 
-$t->run_daemon('dnsmasq', '-C', $tdir."/dns.conf", '-k', "--log-facility=$tdir/dns.log", '-q');
+$t->run_daemon('dnsmasq', '-C', "$tdir/dns.conf", '-k',
+	"--log-facility=$tdir/dns.log", '-q');
 $t->wait_for_resolver('127.0.0.1', 5454, 'b1.example.com', '127.0.0.1');
 
 $t->run();
 
 ###############################################################################
 
-my @ports = my ($port1, $port2) = (port(8081), port(8082));
-
-my ($j, $v);
+my ($port1, $port2) = (port(8081), port(8082));
 
 # wait for nginx resolver to complete query
 for (1 .. 50) {
-    last if http_get('/') =~ qr /200 OK/;
-    select undef, undef, undef, 0.1;
+	last if http_get('/') =~ qr /200 OK/;
+	select undef, undef, undef, 0.1;
 }
 
 # expect that upstream contains addresses from 'test_hosts' file
 
-$j = get_json("/api/status/http/upstreams/u/peers/127.0.0.1:$port1");
-is($j->{'server'}, 'backends.example.com', 'b1 address resolved from srv');
+my $j = get_json("/api/status/http/upstreams/u/peers/127.0.0.1:$port1");
+is($j->{server}, 'backends.example.com', 'b1 address resolved from srv');
 
 $j = get_json("/api/status/http/upstreams/u/peers/127.0.0.2:$port2");
 is($j->{'server'}, 'backends.example.com', 'b2 address resolved from srv');
@@ -193,8 +189,10 @@ my $s = http_start_uri('/u/slow'); # connects to b1
 my $s2 = http_start_uri('/u/slow'); # connects to b2
 
 $t->stop_daemons();
+
 # start DNS server with new config, b2 disappears from backends.example.com
-$t->run_daemon('dnsmasq', '-C', $tdir."/dns2.conf", '-k', "--log-facility=$tdir/dns.log", '-q');
+$t->run_daemon('dnsmasq', '-C', "$tdir/dns2.conf", '-k',
+	"--log-facility=$tdir/dns.log", '-q');
 $t->wait_for_resolver('127.0.0.1', 5454, 'b1.example.com', '127.0.0.1');
 
 # let various resolve timers run
@@ -209,8 +207,10 @@ my $res2 = http_end($s2);
 
 # whole backends.example.com disappears
 $t->stop_daemons();
+
 # start DNS server with new config,
-$t->run_daemon('dnsmasq', '-C', $tdir."/dns3.conf", '-k', "--log-facility=$tdir/dns.log", '-q');
+$t->run_daemon('dnsmasq', '-C', "$tdir/dns3.conf", '-k',
+	"--log-facility=$tdir/dns.log", '-q');
 $t->wait_for_resolver('127.0.0.1', 5454, 'b1.example.com', '127.0.0.1');
 
 # let various resolve timers run
@@ -222,34 +222,22 @@ is(%$j, 0, "example.com disappeared");
 
 ###############################################################################
 
-sub get_json {
-    my ($uri) = @_;
-    my $response = http_get($uri);
-    my ($headers,$body) =  split /\n\r/, $response, 2;
-    #print($body);
-    my $json;
-    eval { $json = JSON::PP::decode_json($body) };
-    if ($@) {
-        return undef;
-    }
-
-    return $json;
-}
-
 sub http_start_uri {
-    my ($uri) = @_;
+	my ($uri) = @_;
 
-    my $s = IO::Socket::INET->new(Proto => 'tcp',
-                              PeerAddr => '127.0.0.1',
-                              PeerPort => port(8080))
-    or die "cannot create socket: $!\n";
+	my $s = IO::Socket::INET->new(
+		Proto    => 'tcp',
+		PeerAddr => '127.0.0.1',
+		PeerPort => port(8080)
+	)
+		or die "cannot create socket: $!\n";
 
-    http_start(<<EOF, socket => $s);
+	http_start(<<EOF, socket => $s);
 GET $uri HTTP/1.0
 Host: localhost
 
 EOF
 
-    return $s;
+	return $s;
 }
 
