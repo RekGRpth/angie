@@ -9,6 +9,17 @@
 
 <change type="feature">
 <para lang="ru">
+директива "rdp_preread" модуля "stream", включающая извлечение rdp cookie
+в переменные "$rdp_cookie", "$rdp_cookie_".
+</para>
+<para lang="en">
+the "rdp_preread" directive in the "stream" module, which allows extracting
+the rdp cookie into the "$rdp_cookie" and "$rdp_cookie_" variables.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
 директива "sticky" и сопутствующие настройки в блоке "upstream" stream-модуля,
 позволяющие задать режим привязки сессий, при котором все запросы в рамках
 сессии будут направляться на один и тот же сервер.
@@ -37,6 +48,49 @@ modules.
 </para>
 <para lang="en">
 all functionality of nginx 1.27.0.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+в конфигурациях с несколькими директивами error_log ACME-клиенты могли
+выводить сообщения в несоответствующие логи.
+</para>
+<para lang="en">
+in configurations with multiple error_log directives, ACME clients could
+log messages to incorrect logs.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+запрос сертификата по протоколу ACME мог завершаться ошибкой "[alert]
+getsockname() failed (9: Bad file descriptor)" в некоторых конфигурациях.
+</para>
+<para lang="en">
+certificate request via the ACME protocol could result in "[alert]
+getsockname() failed (9: Bad file descriptor)" errors on some configurations.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+поддержка BoringSSL в модуле ACME.
+</para>
+<para lang="en">
+support for BoringSSL in the ACME module.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+возможность указать несколько директив "acme" в одном блоке "server", что
+позволяет настраивать получение сертификатов сразу двух типов в рамках
+данного виртуального сервера.
+</para>
+<para lang="en">
+support for multiple acme directives in a server block allowing to
+obtain different types of certificates for a single domain.
 </para>
 </change>
 
