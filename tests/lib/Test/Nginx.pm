@@ -1,6 +1,6 @@
 package Test::Nginx;
 
-# (C) 2022 Web Server LLC
+# (C) 2022-2024 Web Server LLC
 # (C) Maxim Dounin
 
 # Generic module for Angie tests.
@@ -199,6 +199,8 @@ sub has_module($) {
 			=> '(?s)^(?!.*--without-stream_split_clients_module)',
 		stream_ssl
 			=> '--with-stream_ssl_module',
+		stream_ssl_preread
+			=> '--with-stream_ssl_preread_module',
 		stream_upstream_hash
 			=> '(?s)^(?!.*--without-stream_upstream_hash_module)',
 		stream_upstream_least_conn
@@ -387,6 +389,12 @@ sub run(;$) {
 		$self->write_file_expand('nginx.conf', $c);
 	}
 
+	if ($ENV{TEST_ANGIE_CATCONF}) {
+		Test::More::diag('------------------------------------------');
+		Test::More::diag($self->read_file('nginx.conf'));
+		Test::More::diag('------------------------------------------');
+	}
+
 	my $pid = fork();
 	die "Unable to fork(): $!\n" unless defined $pid;
 
@@ -471,6 +479,31 @@ sub dump_config() {
 		. "-e error.log " . join(' ', @globals);
 
 	return qx/$command 2>&1/;
+}
+
+# nginx -t
+# returns exit code and message
+sub test_config() {
+	my ($self) = @_;
+
+	my $testdir = $self->{_testdir};
+
+	my @globals = $self->{_test_globals} ?
+		() : ('-g', "pid $testdir/nginx.pid; "
+		. "error_log $testdir/error.log;");
+	my $command = "$NGINX -t -p $testdir/ -c nginx.conf "
+		. "-e test_config_error.log " . join(' ', @globals);
+
+	my $res = system("$command > $testdir/test_config.log 2>&1");
+	my $exit_code = $? >> 8;
+
+	my $message = $self->read_file('test_config.log');
+
+	# nginx -t creates an empty pid file
+	# we need to delete it before starting nginx
+	unlink "$testdir/nginx.pid";
+
+	return ($exit_code, $message);
 }
 
 sub waitforfile($;$) {
