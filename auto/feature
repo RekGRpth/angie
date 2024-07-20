@@ -1,7 +1,12 @@
 
+# Copyright (C) 2024 Web Server LLC
 # Copyright (C) Igor Sysoev
 # Copyright (C) Nginx, Inc.
 
+
+if check_cache "$ngx_feature" "feature"; then
+    return
+fi
 
 echo $ngx_n "checking for $ngx_feature ...$ngx_c"
 
@@ -13,10 +18,12 @@ checking for $ngx_feature
 END
 
 ngx_found=no
+ngx_add_have=no
+ngx_add_value=no
 
 if test -n "$ngx_feature_name"; then
-    ngx_have_feature=`echo $ngx_feature_name \
-                   | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ`
+    name2macro "$ngx_feature_name"
+    ngx_have_feature="$res"
 fi
 
 if test -n "$ngx_feature_path"; then
@@ -39,8 +46,10 @@ int main(void) {
 END
 
 
-ngx_test="$CC $CC_TEST_FLAGS $CC_AUX_FLAGS $ngx_feature_inc_path \
-          -o $NGX_AUTOTEST $NGX_AUTOTEST.c $NGX_TEST_LD_OPT $ngx_feature_libs"
+ngx_test="($CC -c $CC_TEST_FLAGS $CC_AUX_FLAGS $ngx_feature_inc_path \
+           -o $NGX_AUTOTEST.o $NGX_AUTOTEST.c && \
+           $CC $CC_TEST_FLAGS $CC_AUX_FLAGS \
+           -o $NGX_AUTOTEST $NGX_AUTOTEST.o $NGX_TEST_LD_OPT $ngx_feature_libs)"
 
 ngx_feature_inc_path=
 
@@ -59,6 +68,7 @@ if [ -x $NGX_AUTOTEST ]; then
 
                 if test -n "$ngx_feature_name"; then
                     have=$ngx_have_feature . auto/have
+                    ngx_add_have=yes
                 fi
 
             else
@@ -72,13 +82,9 @@ if [ -x $NGX_AUTOTEST ]; then
                 echo " found"
                 ngx_found=yes
 
-                cat << END >> $NGX_AUTO_CONFIG_H
+                have="$ngx_feature_name" value="$($NGX_AUTOTEST)" . auto/define
+                ngx_add_value=$value
 
-#ifndef $ngx_feature_name
-#define $ngx_feature_name  `$NGX_AUTOTEST`
-#endif
-
-END
             else
                 echo " found but is not working"
             fi
@@ -95,6 +101,7 @@ END
 
                 if test -n "$ngx_feature_name"; then
                     have=$ngx_have_feature . auto/have
+                    ngx_add_have=yes
                 fi
             fi
         ;;
@@ -105,6 +112,7 @@ END
 
             if test -n "$ngx_feature_name"; then
                 have=$ngx_have_feature . auto/have
+                ngx_add_have=yes
             fi
         ;;
 
@@ -121,3 +129,21 @@ else
 fi
 
 rm -rf $NGX_AUTOTEST*
+
+if [ $NGX_FEATURE_CACHE = NO ]; then
+    return
+fi
+
+cache_output_start
+
+echo "ngx_found=$ngx_found"
+
+if [ $ngx_add_have = yes ]; then
+    echo "have=$ngx_have_feature . auto/have"
+fi
+
+if [ $ngx_add_value != no ]; then
+    echo "have=\"$ngx_feature_name\" value=\"$ngx_add_value\" . auto/define"
+fi
+
+cache_output_end

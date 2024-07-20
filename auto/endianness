@@ -1,7 +1,12 @@
 
+# Copyright (C) 2024 Web Server LLC
 # Copyright (C) Igor Sysoev
 # Copyright (C) Nginx, Inc.
 
+
+if check_cache "little endian" "endianness"; then
+    return
+fi
 
 echo $ngx_n "checking for system byte ordering ...$ngx_c"
 
@@ -12,6 +17,7 @@ checking for system byte ordering
 
 END
 
+ngx_found=no
 
 cat << END > $NGX_AUTOTEST.c
 
@@ -26,8 +32,10 @@ int main(void) {
 
 END
 
-ngx_test="$CC $CC_TEST_FLAGS $CC_AUX_FLAGS \
-          -o $NGX_AUTOTEST $NGX_AUTOTEST.c $NGX_LD_OPT $ngx_feature_libs"
+ngx_test="($CC -c $CC_TEST_FLAGS $CC_AUX_FLAGS \
+           -o $NGX_AUTOTEST.o $NGX_AUTOTEST.c && \
+           $CC $CC_TEST_FLAGS $CC_AUX_FLAGS \
+           -o $NGX_AUTOTEST $NGX_AUTOTEST.o $NGX_LD_OPT $ngx_feature_libs)"
 
 eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
 
@@ -35,6 +43,7 @@ if [ -x $NGX_AUTOTEST ]; then
     if $NGX_AUTOTEST >/dev/null 2>&1; then
         echo " little endian"
         have=NGX_HAVE_LITTLE_ENDIAN . auto/have
+        ngx_found=yes
     else
         echo " big endian"
     fi
@@ -48,3 +57,17 @@ else
     echo "$0: error: cannot detect system byte ordering"
     exit 1
 fi
+
+if [ $NGX_FEATURE_CACHE = NO ]; then
+    return
+fi
+
+cache_output_start
+
+echo "ngx_found=$ngx_found"
+
+if [ $ngx_found = yes ]; then
+    echo "have=NGX_HAVE_LITTLE_ENDIAN . auto/have"
+fi
+
+cache_output_end

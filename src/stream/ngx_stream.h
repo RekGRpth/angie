@@ -1,6 +1,6 @@
 
 /*
- * Copyright (C) 2022 Web Server LLC
+ * Copyright (C) 2022-2024 Web Server LLC
  * Copyright (C) Roman Arutyunyan
  * Copyright (C) Nginx, Inc.
  */
@@ -124,6 +124,7 @@ typedef struct {
     ngx_atomic_t                   connections;
     ngx_atomic_t                   sessions[6];
     ngx_atomic_t                   discarded;
+    ngx_atomic_t                   passed;
     ngx_atomic_t                   received;
     ngx_atomic_t                   sent;
 #if (NGX_STREAM_SSL)
@@ -404,6 +405,11 @@ ngx_int_t ngx_stream_validate_host(ngx_str_t *host, ngx_pool_t *pool,
     ngx_uint_t alloc);
 ngx_int_t ngx_stream_find_virtual_server(ngx_stream_session_t *s,
     ngx_str_t *host, ngx_stream_core_srv_conf_t **cscfp);
+
+#if (NGX_API)
+void ngx_stream_stats_fix(ngx_stream_session_t *s,
+    ngx_stream_core_srv_conf_t *cscf);
+#endif
 
 void ngx_stream_init_connection(ngx_connection_t *c);
 void ngx_stream_session_handler(ngx_event_t *rev);

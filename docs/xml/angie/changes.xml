@@ -7,6 +7,36 @@
 
 <changes ver="1.7.0" date="">
 
+<change type="change">
+<para lang="ru">
+теперь перед HTTP-запросом допускается не более одной пустой строки для
+улучшения защиты против DoS-атак.<br/>
+Спасибо Максиму Дунину (freenginx).
+</para>
+<para lang="en">
+a maximum of one empty line is now allowed before an HTTP request to better
+protect against DoS attacks.<br/>
+Thanks to Maxim Dounin (freenginx).
+</para>
+</change>
+
+<change type="change">
+<para lang="ru">
+при чтении тела запроса с использованием HTTP/1.1 "chunked transfer encoding"
+суммарный размер игнорируемых "chunk extensions" и полей "trailer header"
+теперь ограничен директивой "client_max_body_size" для улучшения защиты против
+DoS-атак.<br/>
+Спасибо Максиму Дунину (freenginx) и Bartek Nowotarski.
+</para>
+<para lang="en">
+when reading a request body using HTTP/1.1 chunked transfer encoding,
+the total size of ignored chunk extensions and trailer header fields
+is now limited by the "client_max_body_size" directive to better protect
+against DoS attacks.<br/>
+Thanks to Maxim Dounin (freenginx) and Bartek Nowotarski.
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 создание PID-файла теперь выполняется атомарно через промежуточный временный
@@ -45,6 +75,30 @@ Thanks to Maxim Dounin (freenginx).
 a segmentation fault might occur in a worker process
 when handling cached responses with the "X-Accel-Redirect" header.<br/>
 Thanks to Maxim Dounin (freenginx) and Jiří Setnička.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+счётчик "passed" в зоне API статистики, задаваемой директивой "status_zone"
+модуля "stream", для подсчёта соединений, переданных на обработку в другие
+слушающие сокеты при помощи директив "pass".
+</para>
+<para lang="en">
+the "passed" counter in the statistics API zone, specified by the "status_zone"
+directive of the "stream" module, to count connections passed for handling
+to other listening sockets using the "pass" directives.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при использовании виртуальных серверов или директивы "pass" в модуле "stream"
+соединения могли учитываться некорректно в API статистики.
+</para>
+<para lang="en">
+when using virtual servers or the "pass" directives in the "stream" module,
+connections could be accounted incorrectly in the statistics API.
 </para>
 </change>
 
