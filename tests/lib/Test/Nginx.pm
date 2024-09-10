@@ -150,6 +150,7 @@ sub has_module($) {
 
 	my %regex = (
 		sni	=> 'TLS SNI support enabled',
+		tickets	=> 'TLS SNI support enabled',
 		mail	=> '--with-mail((?!\S)|=dynamic)',
 		flv	=> '--with-http_flv_module',
 		perl	=> '--with-http_perl_module',
@@ -371,7 +372,7 @@ sub has_daemon($) {
 	}
 
 	Test::More::plan(skip_all => "$daemon not found")
-		unless `which $daemon`;
+		unless `which $daemon 2>/dev/null`;
 
 	return $self;
 }
@@ -1005,6 +1006,7 @@ sub http_start($;%) {
 			require IO::Socket::SSL;
 			IO::Socket::SSL->start_SSL(
 				$s,
+				SSL_version => 'SSLv23',
 				SSL_verify_mode =>
 					IO::Socket::SSL::SSL_VERIFY_NONE(),
 				%extra

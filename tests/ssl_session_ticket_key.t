@@ -27,7 +27,7 @@ plan(skip_all => 'Net::SSLeay version => 1.86 required') if $@;
 eval { require IO::Socket::SSL; die if $IO::Socket::SSL::VERSION < 2.030; };
 plan(skip_all => 'IO::Socket::SSL version => 2.030 required') if $@;
 
-my $t = Test::Nginx->new()->has(qw/http http_ssl socket_ssl/)
+my $t = Test::Nginx->new()->has(qw/http http_ssl tickets socket_ssl/)
 	->has_daemon('openssl')->plan(2)
 	->write_file_expand('nginx.conf', <<'EOF');
 
@@ -99,12 +99,16 @@ is(get_ticket_key_name(), $key, 'ticket key match');
 
 select undef, undef, undef, 2.5;
 
+local $TODO = 'no ticket key callback'
+	if $t->has_module('OpenSSL') and not $t->has_feature('openssl:0.9.8h');
 local $TODO = 'no TLSv1.3 sessions, old Net::SSLeay'
 	if $Net::SSLeay::VERSION < 1.88 && test_tls13();
 local $TODO = 'no TLSv1.3 sessions, old IO::Socket::SSL'
 	if $IO::Socket::SSL::VERSION < 2.061 && test_tls13();
 local $TODO = 'no TLSv1.3 sessions in LibreSSL'
 	if $t->has_module('LibreSSL') && test_tls13();
+local $TODO = 'no TLSv1.3 sessions in Net::SSLeay (LibreSSL)'
+	if Net::SSLeay::constant("LIBRESSL_VERSION_NUMBER") && test_tls13();
 
 cmp_ok(get_ticket_key_name(), 'ne', $key, 'ticket key next');
 

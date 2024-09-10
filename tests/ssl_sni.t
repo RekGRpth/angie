@@ -116,6 +116,7 @@ like(get_host('example.org', 'example.com'), qr!400 Bad Request!,
 # $ssl_server_name in sessions
 
 my $ctx = new IO::Socket::SSL::SSL_Context(
+	SSL_version => 'SSLv23',
 	SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_NONE(),
 	SSL_session_cache_size => 100);
 
@@ -128,6 +129,8 @@ local $TODO = 'no TLSv1.3 sessions, old IO::Socket::SSL'
 	if $IO::Socket::SSL::VERSION < 2.061 && test_tls13();
 local $TODO = 'no TLSv1.3 sessions in LibreSSL'
 	if $t->has_module('LibreSSL') && test_tls13();
+local $TODO = 'no TLSv1.3 sessions in Net::SSLeay (LibreSSL)'
+	if Net::SSLeay::constant("LIBRESSL_VERSION_NUMBER") && test_tls13();
 
 like(get('/name', 'localhost', $ctx), qr/^r:localhost$/m,
 	'ssl server name - reused');
