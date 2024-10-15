@@ -95,12 +95,21 @@ sub DESTROY {
 
 			my @errors = $self->read_file('error.log') =~ /.+\[$level\].+/gm;
 
-			if (length $errors_re && scalar @errors) {
+			if (length $errors_re) {
+
 				Test::More::ok(
 					! (grep { $_ !~ qr/$errors_re/ } @errors),
 					"no unexpected $level errors")
 				or Test::More::diag("all $level errors: "
 					. join("\n", @errors));
+
+				unless (scalar @errors) {
+					Test::More::diag(
+						"expected $level errors that are not in the log:");
+					Test::More::diag(
+						Test::More::explain($self->{_errors_to_skip}{$level}));
+				}
+
 			} else {
 				my $errors = join("\n", @errors);
 				Test::More::ok($errors eq '', "no $level errors")
@@ -378,7 +387,7 @@ sub has_daemon($) {
 }
 
 sub try_run($$) {
-	my ($self, $message) = @_;
+	my ($self, $message, $check_message) = @_;
 
 	eval {
 		open OLDERR, ">&", \*STDERR; close STDERR;
@@ -395,7 +404,15 @@ sub try_run($$) {
 		close F;
 	}
 
-	Test::More::plan(skip_all => $message);
+	my $message_found = 0;
+	if ($check_message) {
+		$message_found =
+			($self->read_file('error.log') =~ quotemeta($message));
+	}
+
+	Test::More::plan(skip_all => $message)
+		if $message_found || !$check_message;
+
 	return $self;
 }
 
