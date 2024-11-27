@@ -75,15 +75,14 @@ sub DESTROY {
 
 		my @alerts = $self->find_in_file('error.log', qr/.+\[alert\].+/);
 
-		if ($^O eq 'solaris') {
-			$Test::Nginx::TODO = 'alerts' if @alerts
-				&& ! grep { $_ !~ /phantom event/ } @alerts;
-		}
-		if ($^O eq 'MSWin32') {
-			my $re = qr/CloseHandle|TerminateProcess/;
-			$Test::Nginx::TODO = 'alerts' if @alerts
-				&& ! grep { $_ !~ $re } @alerts;
-		}
+		local $Test::Nginx::TODO = 'alerts' if @alerts
+			&& $^O eq 'solaris'
+			&& ! grep { $_ !~ /phantom event/ } @alerts;
+
+		local $Test::Nginx::TODO = 'alerts' if @alerts
+			&& $^O eq 'MSWin32'
+			&& ! grep { $_ !~ qr/CloseHandle|TerminateProcess/ }
+				@alerts;
 
 		Test::More::is(join("\n", @alerts), '', 'no alerts');
 	}
@@ -119,10 +118,15 @@ sub DESTROY {
 	}
 
 	if (Test::More->builder->expected_tests) {
-		local $Test::Nginx::TODO;
 		my $errors = join "\n",
 			$self->find_in_file('error.log', qr/.+Sanitizer.+/);
 		Test::More::is($errors, '', 'no sanitizer errors');
+	}
+
+	if (Test::More->builder->expected_tests && $ENV{TEST_ANGIE_VALGRIND}) {
+		my $errors = $self->read_file('valgrind.log');
+		$errors = join "\n", $errors =~ /^==\d+== .+/gm;
+		Test::More::is($errors, '', 'no valgrind errors');
 	}
 
 	if ($ENV{TEST_ANGIE_CATLOG}) {
@@ -419,6 +423,8 @@ sub try_run($$) {
 sub plan($) {
 	my ($self, $plan) = @_;
 
+	$plan += 1 if $ENV{TEST_ANGIE_VALGRIND};
+
 	Test::More::plan(tests => $plan + 4);
 
 	return $self;
@@ -469,7 +475,10 @@ sub run(;$) {
 		my @globals = $self->{_test_globals} ?
 			() : ('-g', "pid $testdir/nginx.pid; "
 			. "error_log $testdir/error.log debug;");
-		exec($NGINX, '-p', "$testdir/", '-c', 'nginx.conf',
+		my @valgrind = (not $ENV{TEST_ANGIE_VALGRIND}) ?
+			() : ('valgrind', '-q',
+			"--log-file=$testdir/valgrind.log");
+		exec(@valgrind, $NGINX, '-p', "$testdir/", '-c', 'nginx.conf',
 			'-e', 'error.log', '--log-level=debug', @globals)
 			or die "Unable to exec(): $!\n";
 	}
@@ -1089,7 +1098,7 @@ sub http_start($;%) {
 				or die $IO::Socket::SSL::SSL_ERROR . "\n";
 
 			log_in("ssl cipher: " . $s->get_cipher());
-			log_in("ssl cert: " . $s->peer_certificate('issuer'));
+			log_in("ssl cert: " . $s->peer_certificate('subject'));
 		}
 
 		log_out($request);

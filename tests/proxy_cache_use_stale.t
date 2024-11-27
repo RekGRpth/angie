@@ -163,9 +163,9 @@ like(http_get('/t2.html'), qr/HIT/, 's-w-r - cached');
 
 get('/tt.html', 'max-age=1, stale-if-error=3');
 get('/t3.html', 'max-age=1, stale-while-revalidate=2');
-get('/t4.html', 'max-age=1, stale-while-revalidate=3');
-get('/t5.html', 'max-age=1, stale-while-revalidate=3');
-get('/t6.html', 'max-age=1, stale-while-revalidate=4');
+get('/t4.html', 'max-age=1, stale-while-revalidate=10');
+get('/t5.html', 'max-age=1, stale-while-revalidate=10');
+get('/t6.html', 'max-age=1, stale-while-revalidate=10');
 get('/t7.html', 'max-age=1, stale-while-revalidate=10');
 http_get('/ssi.html');
 get('/updating/t.html', 'max-age=1');
@@ -246,12 +246,6 @@ $t->write_file('ssi.html', 'xxx <!--#include virtual="/t9.html?lim=1" --> xxx');
 
 $r = read_all(http_get('/ssi.html', start => 1));
 like($r, qr/^xxx (SEE-THIS){1024} xxx$/ms, 's-w-r - not blocked in subrequest');
-
-# "aio_write" is used to produce "open socket ... left in connection" alerts.
-
-$t->todo_alerts() if $t->read_file('nginx.conf') =~ /aio_write on/
-	and $t->read_file('nginx.conf') =~ /aio threads/ and $^O eq 'freebsd'
-	and !$t->has_version('1.25.4');
 
 # due to the missing content_handler inheritance in a cloned subrequest,
 # this used to access a static file in the update request

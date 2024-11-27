@@ -42,8 +42,10 @@ http {
     proxy_cache_path   %%TESTDIR%%/cache  keys_zone=NAME:1m;
 
     server {
-        listen       127.0.0.1:8080 http2 ssl sndbuf=32k;
+        listen       127.0.0.1:8080 ssl sndbuf=32k;
         server_name  localhost;
+
+        http2 on;
 
         ssl_certificate_key localhost.key;
         ssl_certificate localhost.crt;
@@ -88,11 +90,9 @@ foreach my $name ('localhost') {
 $t->write_file('tbig.html',
 	join('', map { sprintf "XX%06dXX", $_ } (1 .. 500000)));
 
-open OLDERR, ">&", \*STDERR; close STDERR;
 $t->run();
-open STDERR, ">&", \*OLDERR;
 
-plan(skip_all => 'no ALPN/NPN negotiation') unless defined getconn(port(8080));
+plan(skip_all => 'no ALPN negotiation') unless defined getconn(port(8080));
 $t->plan(1);
 
 ###############################################################################
@@ -127,15 +127,6 @@ sub getconn {
 			alpn => 'h2');
 		$s = Test::Nginx::HTTP2->new($port, socket => $sock)
 			if $sock->alpn_selected();
-	};
-
-	return $s if defined $s;
-
-	eval {
-		my $sock = Test::Nginx::HTTP2::new_socket($port, SSL => 1,
-			npn => 'h2');
-		$s = Test::Nginx::HTTP2->new($port, socket => $sock)
-			if $sock->next_proto_negotiated();
 	};
 
 	return $s;
