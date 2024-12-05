@@ -45,6 +45,11 @@ static void *ngx_stream_ssl_create_srv_conf(ngx_conf_t *cf);
 static char *ngx_stream_ssl_merge_srv_conf(ngx_conf_t *cf, void *parent,
     void *child);
 
+#if (NGX_API)
+static void ngx_stream_add_ssl_stats(ngx_connection_t *c,
+    ngx_stream_server_stats_t *stats);
+#endif
+
 #if (!defined(NGX_STREAM_PROXY_MULTICERT))
 static ngx_int_t ngx_stream_ssl_compile_certificates(ngx_conf_t *cf,
     ngx_stream_ssl_srv_conf_t *conf);
@@ -380,7 +385,7 @@ static ngx_stream_variable_t  ngx_stream_ssl_vars[] = {
       (uintptr_t) ngx_ssl_get_session_reused, NGX_STREAM_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_server_name"), NULL, ngx_stream_ssl_variable,
-      (uintptr_t) ngx_ssl_get_server_name, NGX_STREAM_VAR_CHANGEABLE, 0 },
+      (uintptr_t) ngx_ssl_get_server_name, NGX_STREAM_VAR_NOCACHEABLE, 0 },
 
     { ngx_string("ssl_alpn_protocol"), NULL, ngx_stream_ssl_variable,
       (uintptr_t) ngx_ssl_get_alpn_protocol, NGX_STREAM_VAR_CHANGEABLE, 0 },
@@ -421,7 +426,7 @@ static ngx_stream_variable_t  ngx_stream_ssl_vars[] = {
       (uintptr_t) ngx_ssl_get_client_v_remain, NGX_STREAM_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_server_cert_type"), NULL, ngx_stream_ssl_variable,
-      (uintptr_t) ngx_ssl_get_server_cert_type, NGX_STREAM_VAR_CHANGEABLE, 0 },
+      (uintptr_t) ngx_ssl_get_server_cert_type, NGX_STREAM_VAR_NOCACHEABLE, 0 },
 
       ngx_stream_null_variable
 };
@@ -538,6 +543,8 @@ ngx_stream_ssl_init_connection(ngx_ssl_t *ssl, ngx_connection_t *c)
 
     /* rc == NGX_OK */
 
+    ngx_stream_ssl_handshake_handler(c);
+
     return NGX_OK;
 }
 
@@ -556,21 +563,36 @@ ngx_stream_ssl_handshake_handler(ngx_connection_t *c)
 #if (NGX_API)
     cscf = ngx_stream_get_module_srv_conf(s, ngx_stream_core_module);
 
-    if (cscf->server_zone) {
-        stats = cscf->server_zone->stats;
+    if (cscf->status_zone != NULL) {
+        stats = ngx_stream_get_server_stats(s, cscf->status_zone);
 
-        if (c->ssl->handshaked) {
-            (void) ngx_atomic_fetch_add(&stats->ssl_handshaked, 1);
+        if (stats != NULL) {
+            /*
+             * If the variable associated with the 'status_zone' directive
+             * changes or acquires a value after establishing an
+             * connection, we move connection statistics from the old
+             * value to the new one, or, if no previous statistics exist,
+             * we add new ones.
+             */
 
-            if (SSL_session_reused(c->ssl->connection)) {
-                (void) ngx_atomic_fetch_add(&stats->ssl_reuses, 1);
+            if (s->server_stats != NULL) {
+
+                if (s->server_stats != stats) {
+                    ngx_stream_add_connection_stats(s->server_stats, -1);
+                    ngx_stream_add_connection_stats(stats, 1);
+                }
+
+            } else {
+                s->stat_processing = 1;
+                ngx_stream_add_connection_stats(stats, 1);
             }
 
-        } else if (c->read->timedout) {
-            (void) ngx_atomic_fetch_add(&stats->ssl_timedout, 1);
+            s->server_stats = stats;
 
-        } else {
-            (void) ngx_atomic_fetch_add(&stats->ssl_failed, 1);
+            ngx_stream_add_ssl_stats(c, stats);
+
+        } else if (s->server_stats != NULL) {
+            ngx_stream_add_ssl_stats(c, s->server_stats);
         }
     }
 #endif
@@ -582,9 +604,8 @@ ngx_stream_ssl_handshake_handler(ngx_connection_t *c)
 
     if (c->read->timer_set) {
         ngx_del_timer(c->read);
+        ngx_stream_core_run_phases(s);
     }
-
-    ngx_stream_core_run_phases(s);
 }
 
 
@@ -648,10 +669,6 @@ ngx_stream_ssl_servername(ngx_ssl_conn_t *ssl_conn, int *ad, void *arg)
     if (rc == NGX_DECLINED) {
         goto done;
     }
-
-#if (NGX_API)
-    ngx_stream_stats_fix(s, cscf);
-#endif
 
     s->srv_conf = cscf->ctx->srv_conf;
 
@@ -1672,3 +1689,22 @@ ngx_stream_ssl_init(ngx_conf_t *cf)
 
     return NGX_OK;
 }
+
+
+#if (NGX_API)
+
+static void
+ngx_stream_add_ssl_stats(ngx_connection_t *c, ngx_stream_server_stats_t *stats)
+{
+    if (c->ssl->handshaked) {
+        ngx_stream_add_ssl_handshake_stats(c, stats, 1);
+
+    } else if (c->read->timedout) {
+        (void) ngx_atomic_fetch_add(&stats->ssl_timedout, 1);
+
+    } else {
+        (void) ngx_atomic_fetch_add(&stats->ssl_failed, 1);
+    }
+}
+
+#endif

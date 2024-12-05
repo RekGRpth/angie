@@ -7,6 +7,52 @@
 
 <changes ver="1.8.0" date="">
 
+<change type="bugfix">
+<para lang="ru">
+некоторые SSL-рукопожатия могли не учитываться при запросе статистики для
+модуля 'stream'.
+</para>
+<para lang="en">
+some SSL handshakes could be missed when requesting statistics for the
+'stream' module.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+директива "max_headers", ограничивающая максимальное количество полей заголовка
+в HTTP-запросе для лучшей защиты от DoS-атак.<br/>
+Спасибо Максиму Дунину (freenginx) и Максиму Евменкину.
+</para>
+<para lang="en">
+the "max_headers" directive that limits the number of HTTP request header fields
+to better protect against DoS attacks.<br/>
+Thanks to Maxim Dounin (freenginx) and Maksim Yevmenkin.
+</para>
+</change>
+
+<change type="change">
+<para lang="ru">
+запрещено кэширование для переменных "$ssl_server_name",
+"$ssl_server_cert_type", "$ssl_preread_protocol" и "$ssl_preread_server_name"
+модуля "stream".
+</para>
+<para lang="en">
+disabled caching for the variables "$ssl_server_name", "$ssl_server_cert_type",
+"$ssl_preread_protocol", and "$ssl_preread_server_name" in the "stream" module.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+поддержка переменных в директивах "status_zone" в модулях stream и HTTP.
+</para>
+support for variables in the "status_zone" directives in the stream and HTTP
+modules.
+<para lang="en">
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 поддержка кросс-компиляции: система сборки теперь может использовать

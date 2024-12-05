@@ -93,10 +93,12 @@ ngx_module_t  ngx_stream_ssl_preread_module = {
 static ngx_stream_variable_t  ngx_stream_ssl_preread_vars[] = {
 
     { ngx_string("ssl_preread_protocol"), NULL,
-      ngx_stream_ssl_preread_protocol_variable, 0, 0, 0 },
+      ngx_stream_ssl_preread_protocol_variable, 0,
+      NGX_STREAM_VAR_NOCACHEABLE, 0 },
 
     { ngx_string("ssl_preread_server_name"), NULL,
-      ngx_stream_ssl_preread_server_name_variable, 0, 0, 0 },
+      ngx_stream_ssl_preread_server_name_variable, 0,
+      NGX_STREAM_VAR_NOCACHEABLE, 0 },
 
     { ngx_string("ssl_preread_alpn_protocols"), NULL,
       ngx_stream_ssl_preread_alpn_protocols_variable, 0, 0, 0 },
@@ -539,10 +541,6 @@ ngx_stream_ssl_preread_servername(ngx_stream_session_t *s,
     if (rc == NGX_DECLINED) {
         return NGX_OK;
     }
-
-#if (NGX_API)
-    ngx_stream_stats_fix(s, cscf);
-#endif
 
     s->srv_conf = cscf->ctx->srv_conf;
 

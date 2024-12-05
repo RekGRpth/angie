@@ -184,6 +184,7 @@ typedef struct {
 
 typedef struct {
     ngx_list_t                        headers;
+    ngx_uint_t                        count;
 
     ngx_table_elt_t                  *host;
     ngx_table_elt_t                  *connection;
@@ -330,6 +331,10 @@ typedef struct {
     ngx_int_t                         nbusy;
 
     ngx_chain_t                      *free;
+
+#if (NGX_API)
+    void                             *server_stats;
+#endif
 
     unsigned                          ssl:1;
     unsigned                          proxy_protocol:1;
