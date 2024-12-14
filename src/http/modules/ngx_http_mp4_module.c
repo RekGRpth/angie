@@ -3278,7 +3278,10 @@ ngx_http_mp4_crop_stsc_data(ngx_http_mp4_file_t *mp4,
 
         start_sample -= n;
 
-        prev_samples = samples;
+        if (next_chunk > chunk) {
+            prev_samples = samples;
+        }
+
         chunk = next_chunk;
         samples = ngx_mp4_get_32value(entry->samples);
         id = ngx_mp4_get_32value(entry->id);
@@ -3287,6 +3290,13 @@ ngx_http_mp4_crop_stsc_data(ngx_http_mp4_file_t *mp4,
     }
 
     next_chunk = trak->chunks + 1;
+
+    if (next_chunk < chunk) {
+        ngx_log_error(NGX_LOG_ERR, mp4->file.log, 0,
+                      "unordered mp4 stsc chunks in \"%s\"",
+                      mp4->file.name.data);
+        return NGX_ERROR;
+    }
 
     ngx_log_debug4(NGX_LOG_DEBUG_HTTP, mp4->file.log, 0,
                    "sample:%uD, chunk:%uD, chunks:%uD, samples:%uD",
@@ -3310,6 +3320,12 @@ found:
         ngx_log_error(NGX_LOG_ERR, mp4->file.log, 0,
                       "zero number of samples in \"%s\"",
                       mp4->file.name.data);
+        return NGX_ERROR;
+    }
+
+    if (chunk == 0) {
+        ngx_log_error(NGX_LOG_ERR, mp4->file.log, 0,
+                      "zero chunk in \"%s\"", mp4->file.name.data);
         return NGX_ERROR;
     }
 

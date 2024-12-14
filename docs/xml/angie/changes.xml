@@ -77,6 +77,23 @@ modules.
 </para>
 </change>
 
+<change type="change">
+<para lang="ru">
+при плавном завершении старых рабочих процессов keepalive-соединения теперь
+закрываются только после истечения таймаута, заданного директивой
+"lingering_timeout", что позволяет предотвратить возможные ошибки на клиенте
+при получении ответа в этот момент.<br/>
+Спасибо Максиму Дунину (freenginx).
+</para>
+<para lang="en">
+when gracefully shutting down old worker processes, keep-alive connections are
+now closed only after the timeout specified by the "lingering_timeout" directive
+has expired, which allows to avoid possible client errors when receiving replies
+at that moment.<br/>
+Thanks to Maxim Dounin (freenginx).
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 поддержка кросс-компиляции: система сборки теперь может использовать
@@ -94,10 +111,72 @@ binaries on build host.
 
 <change type="feature">
 <para lang="ru">
-вся функциональность nginx 1.27.2.
+система хуков в модуле ACME.
+Она позволяет получать wildcard-сертификаты с помощью http-01
+и dns-01-валидации, используя внешнее приложение.
 </para>
 <para lang="en">
-all functionality of nginx 1.27.2.
+hook system in the ACME module.
+This allows wildcard certificates to be obtained through
+http-01 or dns-01 validation using an external application.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+параметр account_key в директиве acme_client, позволяющий
+использовать существующий ключ аккаунта ACME-сервера,
+а не генерировать его автоматически.
+</para>
+<para lang="en">
+account_key parameter for the acme_client directive allowing
+to use an existing key for the ACME server account.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+некоторые ошибки, возникшие в модуле ACME при запуске, могли привести
+к завершению без сообщения об ошибке.
+</para>
+<para lang="en">
+certain errors occurring in the ACME module during startup caused Angie
+to quit without an error message.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+ACME-модуль выводит в лог дополнительную информацию: точная причина
+обновления сертификата, полный список доменов, account ID пользователя,
+длительные периоды неактивности (например, во время опросов), и какой
+домен выполняет валидацию.
+</para>
+<para lang="en">
+the ACME module logs some additional information: why exactly
+the certificate is being renewed, full domain name list, client's
+account ID, long periods of inactivity (e.g. pollings) and domain
+names being challenged.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+автоматическая обработка dns-01-валидации посредством перехвата
+DNS-запросов от ACME-сервера.
+</para>
+<para lang="en">
+automatic handling of dns-01 challenges by intercepting DNS queries
+from the ACME server.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+вся функциональность nginx 1.27.3.
+</para>
+<para lang="en">
+all functionality of nginx 1.27.3.
 </para>
 </change>
 
