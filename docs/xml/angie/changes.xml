@@ -9,6 +9,17 @@
 
 <change type="bugfix">
 <para lang="ru">
+проксирование по HTTP/3 с использованием переменных в имени апстрима могло
+приводить к падению рабочего процесса.
+</para>
+<para lang="en">
+proxying with HTTP/3 using variables in upstream name could
+cause a worker process crash.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
 HTTP/3 клиенты могли отключиться по таймауту при использовании 0-RTT.
 Проблема появилась в версии 1.7.0.
 </para>
@@ -91,6 +102,19 @@ now closed only after the timeout specified by the "lingering_timeout" directive
 has expired, which allows to avoid possible client errors when receiving replies
 at that moment.<br/>
 Thanks to Maxim Dounin (freenginx).
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+совместимость HTTP-модуля сжатия GZip с версиями библиотеки zlib-ng 2.2.0 и
+выше, которые ранее могли приводить к появлению в логе ошибок вида "[alert] gzip
+filter failed to use preallocated memory".
+</para>
+<para lang="en">
+compatibility of GZip HTTP compression module with the zlib-ng versions 2.2.0
+or above, those previously could cause "[alert] gzip filter failed to use
+preallocated memory" messages in the error log.
 </para>
 </change>
 
