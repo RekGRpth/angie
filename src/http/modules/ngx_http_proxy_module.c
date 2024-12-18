@@ -136,6 +136,7 @@ typedef struct {
     ngx_str_t                      host;
     ngx_uint_t                     host_set;
     ngx_flag_t                     enable_hq;
+    ngx_uint_t                     max_table_capacity_set;
 #endif
 } ngx_http_proxy_loc_conf_t;
 
@@ -928,7 +929,7 @@ static ngx_command_t  ngx_http_proxy_commands[] = {
       ngx_conf_set_num_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_proxy_loc_conf_t,
-               upstream.quic.max_concurrent_streams_bidi),
+               upstream.h3_settings.max_concurrent_streams),
       NULL },
 
     { ngx_string("proxy_http3_stream_buffer_size"),
@@ -966,6 +967,15 @@ static ngx_command_t  ngx_http_proxy_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_proxy_loc_conf_t, enable_hq),
       NULL },
+
+    { ngx_string("proxy_http3_max_table_capacity"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_num_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_proxy_loc_conf_t,
+               upstream.h3_settings.max_table_capacity),
+      NULL },
+
 #endif
 
       ngx_null_command
@@ -3879,6 +3889,7 @@ ngx_http_proxy_create_loc_conf(ngx_conf_t *cf)
      *
      *     conf->host = { 0, NULL };
      *     conf->host_set = 0;
+     *     conf->max_table_capacity_set = 0;
      *
      *     conf->upstream.quic.host_key = { 0, NULL }
      *     conf->upstream.quic.stream_reject_code_uni = 0;
@@ -3886,6 +3897,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_t *cf)
      *     conf->upstream.quic.idle_timeout = 0;
      *     conf->upstream.quic.handshake_timeout = 0;
      *     conf->upstream.quic.retry = 0;
+     *
+     *     conf->upstream.h3_settings.max_blocked_streams = 0;
      */
 
     conf->upstream.store = NGX_CONF_UNSET;
@@ -3996,6 +4009,9 @@ ngx_http_proxy_create_loc_conf(ngx_conf_t *cf)
     conf->upstream.quic.shutdown = ngx_http_v3_shutdown;
 
     conf->enable_hq = NGX_CONF_UNSET;
+
+    conf->upstream.h3_settings.max_table_capacity = NGX_CONF_UNSET;
+    conf->upstream.h3_settings.max_concurrent_streams = NGX_CONF_UNSET_UINT;
 
 #endif
 
@@ -4440,6 +4456,59 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     }
 
 #if (NGX_HTTP_V3)
+
+    ngx_conf_merge_value(conf->enable_hq, prev->enable_hq, 0);
+
+    if (conf->enable_hq) {
+        conf->upstream.quic.alpn.data = (unsigned char *)
+                                        NGX_HTTP_V3_HQ_ALPN_PROTO;
+
+        conf->upstream.quic.alpn.len = sizeof(NGX_HTTP_V3_HQ_ALPN_PROTO) - 1;
+
+    } else {
+        conf->upstream.quic.alpn.data = (unsigned char *)
+                                        NGX_HTTP_V3_ALPN_PROTO;
+
+        conf->upstream.quic.alpn.len = sizeof(NGX_HTTP_V3_ALPN_PROTO) - 1;
+    }
+
+    if (conf->upstream.h3_settings.max_table_capacity != NGX_CONF_UNSET_UINT) {
+        /* really set in user config */
+        conf->max_table_capacity_set = 1;
+    }
+
+    ngx_conf_merge_uint_value(conf->upstream.h3_settings.max_table_capacity,
+                              prev->upstream.h3_settings.max_table_capacity,
+                              NGX_HTTP_V3_MAX_TABLE_CAPACITY);
+
+    ngx_conf_merge_uint_value(conf->upstream.h3_settings.max_concurrent_streams,
+                              prev->upstream.h3_settings.max_concurrent_streams,
+                              128);
+
+    conf->upstream.h3_settings.max_blocked_streams =
+                             conf->upstream.h3_settings.max_concurrent_streams;
+
+    ngx_conf_merge_size_value(conf->upstream.quic.stream_buffer_size,
+                              prev->upstream.quic.stream_buffer_size,
+                              65536);
+
+    conf->upstream.quic.max_concurrent_streams_bidi =
+                             conf->upstream.h3_settings.max_concurrent_streams;
+
+    ngx_conf_merge_value(conf->upstream.quic.gso_enabled,
+                         prev->upstream.quic.gso_enabled,
+                         0);
+
+    ngx_conf_merge_uint_value(conf->upstream.quic.active_connection_id_limit,
+                              prev->upstream.quic.active_connection_id_limit,
+                              2);
+
+    conf->upstream.quic.idle_timeout = conf->upstream.read_timeout;
+    conf->upstream.quic.handshake_timeout = conf->upstream.connect_timeout;
+
+    ngx_conf_merge_str_value(conf->upstream.quic.host_key,
+                             prev->upstream.quic.host_key, "");
+
 
     if (conf->http_version == NGX_HTTP_VERSION_30) {
         if (ngx_http_v3_proxy_merge_quic(cf, conf, prev) != NGX_OK) {
@@ -5972,39 +6041,6 @@ ngx_http_v3_proxy_merge_quic(ngx_conf_t *cf, ngx_http_proxy_loc_conf_t *conf,
         return NGX_ERROR;
     }
 
-    ngx_conf_merge_value(conf->enable_hq, prev->enable_hq, 0);
-
-    if (conf->enable_hq) {
-        conf->upstream.quic.alpn.data = (unsigned char *)
-                                        NGX_HTTP_V3_HQ_ALPN_PROTO;
-
-        conf->upstream.quic.alpn.len = sizeof(NGX_HTTP_V3_HQ_ALPN_PROTO) - 1;
-
-    } else {
-        conf->upstream.quic.alpn.data = (unsigned char *)
-                                        NGX_HTTP_V3_ALPN_PROTO;
-
-        conf->upstream.quic.alpn.len = sizeof(NGX_HTTP_V3_ALPN_PROTO) - 1;
-    }
-
-    ngx_conf_merge_size_value(conf->upstream.quic.stream_buffer_size,
-                              prev->upstream.quic.stream_buffer_size,
-                              65536);
-
-    ngx_conf_merge_uint_value(conf->upstream.quic.max_concurrent_streams_bidi,
-                              prev->upstream.quic.max_concurrent_streams_bidi,
-                              128);
-
-    ngx_conf_merge_value(conf->upstream.quic.gso_enabled,
-                         prev->upstream.quic.gso_enabled,
-                         0);
-
-    ngx_conf_merge_uint_value(conf->upstream.quic.active_connection_id_limit,
-                              prev->upstream.quic.active_connection_id_limit,
-                              2);
-
-    conf->upstream.quic.idle_timeout = conf->upstream.read_timeout;
-    conf->upstream.quic.handshake_timeout = conf->upstream.connect_timeout;
 
     if (conf->upstream.quic.host_key.len == 0) {
 
@@ -6045,6 +6081,25 @@ ngx_http_v3_proxy_merge_quic(ngx_conf_t *cf, ngx_http_proxy_loc_conf_t *conf,
     }
 
     conf->upstream.quic.ssl = conf->upstream.ssl;
+
+#if (NGX_HTTP_CACHE)
+
+        if (conf->upstream.cache
+            && conf->upstream.h3_settings.max_table_capacity)
+        {
+            if (conf->max_table_capacity_set) {
+
+                /* the setting is present in config file, refuse to accept it */
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                               "http3 cache does not work with dynamic table");
+
+                return NGX_ERROR;
+            }
+
+            /* the value is from defaults, disable dynamic table */
+            conf->upstream.h3_settings.max_table_capacity = 0;
+        }
+#endif
 
     return NGX_OK;
 }
@@ -7021,7 +7076,9 @@ ngx_http_v3_proxy_reinit_request(ngx_http_request_t *r)
     r->upstream->process_header = ngx_http_v3_proxy_process_status_line;
     r->upstream->pipe->input_filter = ngx_http_v3_proxy_copy_filter;
     r->upstream->input_filter = ngx_http_v3_proxy_non_buffered_copy_filter;
+
     r->state = 0;
+    ngx_memzero(ctx->v3_parse, sizeof(ngx_http_v3_parse_t));
 
     return NGX_OK;
 }
@@ -7040,6 +7097,8 @@ ngx_http_v3_proxy_process_status_line(ngx_http_request_t *r)
     ngx_http_v3_parse_headers_t  *st;
 #if (NGX_HTTP_CACHE)
     ngx_connection_t              stub;
+    ngx_http_conf_ctx_t           conf_ctx;
+    ngx_http_connection_t         hc;
 #endif
 
     u = r->upstream;
@@ -7054,16 +7113,28 @@ ngx_http_v3_proxy_process_status_line(ngx_http_request_t *r)
     }
 
 #if (NGX_HTTP_CACHE)
-    if (r->cache) {
-        /* no connection here */
-        h3c = NULL;
+    if (r->cache && c == NULL) {
+        /* QPACK table checks require session object */
+
+        ngx_memzero(&hc, sizeof(ngx_http_connection_t));
         ngx_memzero(&stub, sizeof(ngx_connection_t));
+
+        conf_ctx.main_conf = r->main_conf;
+        conf_ctx.srv_conf = r->srv_conf;
+        conf_ctx.loc_conf = r->loc_conf;
+
+        hc.conf_ctx = &conf_ctx;
+
         c = &stub;
 
-        /* while HTTP/3 parsing, only log and pool are used */
+        c->data = &hc;
         c->log = r->connection->log;
         c->pool = r->connection->pool;
-    } else
+
+        if (ngx_http_v3_init_session(c) != NGX_OK) {
+            return NGX_ERROR;
+        }
+    }
 #endif
 
     h3c = ngx_http_v3_get_session(c);
@@ -7087,7 +7158,7 @@ ngx_http_v3_proxy_process_status_line(ngx_http_request_t *r)
        rc = ngx_http_v3_parse_headers(c, st, b);
        if (rc > 0) {
 
-            if (h3c) {
+            if (h3c && c->quic) {
                 ngx_quic_reset_stream(c, rc);
             }
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
