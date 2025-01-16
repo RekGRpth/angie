@@ -2,14 +2,13 @@
 
 # (C) 2024 Web Server LLC
 
-# ACME HTTP-01 challenge test
+# ACME protocol support tests
 
 ###############################################################################
 
 use warnings;
 use strict;
 
-use POSIX qw/ strftime /;
 use Test::More;
 
 BEGIN { use FindBin; chdir($FindBin::Bin); }
@@ -17,10 +16,17 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 use lib 'lib';
 use Test::Nginx qw/ :DEFAULT /;
 
+use POSIX qw/ strftime /;
+use File::Path qw/ make_path /;
+use File::Copy;
+
 ###############################################################################
 
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
+
+eval { require Date::Parse; };
+plan(skip_all => 'Date::Parse not installed') if $@;
 
 # This script requires pebble and pebble-challtestsrv (see
 # https://github.com/letsencrypt/pebble). If you build them from source,
@@ -47,6 +53,13 @@ if (!-f $challtestsrv) {
 	$t->has_daemon($challtestsrv);
 }
 
+my $client1 = 'test1';
+my $client2 = 'test2';
+my $domain1 = "angie-$client1.com";
+my $domain2 = "angie-$client2.com";
+
+my $hook_port = port(9000);
+
 # XXX
 # We don't use the port function here, because the port it creates is currently
 # incompatible with challtestsrv (they both create a pair of tcp/udp sockets on
@@ -56,11 +69,19 @@ if (!-f $challtestsrv) {
 # problems in most cases.
 my $dns_port = 20053;
 
+my $ssl_port = port(8443);
 my $http_port = port(5002);
 my $tls_port = port(5001);
 my $pebble_port = port(14000);
 my $pebble_mgmt_port = port(15000);
 my $challtestsrv_mgmt_port = port(8055);
+
+# This test creates a configuration with two servers. At the start, each server
+# uses a copy of the same valid certificate. Also, each server has an ACME
+# client to renew the certificate. Client 1 is configured to renew its
+# certificate straight away and Client 2 to renew its certificate when it
+# expires. Then the script waits until both certificates are renewed, and
+# checks if they were renewed as configured.
 
 $t->write_file_expand('nginx.conf', <<"EOF");
 %%TEST_GLOBALS%%
@@ -75,19 +96,37 @@ http {
 
     resolver localhost:$dns_port ipv6=off;
 
-    acme_client test https://localhost:$pebble_port/dir
-                email=admin\@angie-test.com;
+    acme_client $client1 https://localhost:14000/dir
+                         renew_on_load
+                         renew_before_expiry=0;
+
+    acme_client $client2 https://localhost:14000/dir
+                         renew_before_expiry=0;
+
+    error_log acme.log notice;
 
     server {
-        listen               %%PORT_8443%% ssl;
-        server_name          angie-test900.com
-                             angie-test901.com
-                             angie-test902.com;
+        listen               $ssl_port ssl;
+        server_name          angie-$client1.com;
 
-        ssl_certificate      \$acme_cert_test;
-        ssl_certificate_key  \$acme_cert_key_test;
+        ssl_certificate      \$acme_cert_$client1;
+        ssl_certificate_key  \$acme_cert_key_$client1;
 
-        acme                 test;
+        acme                 $client1;
+
+        location / {
+            return           200 "SECURED";
+        }
+    }
+
+    server {
+        listen               $ssl_port ssl;
+        server_name          angie-$client2.com;
+
+        ssl_certificate      \$acme_cert_$client2;
+        ssl_certificate_key  \$acme_cert_key_$client2;
+
+        acme                 $client2;
 
         location / {
             return           200 "SECURED";
@@ -108,75 +147,139 @@ http {
 
 EOF
 
+# Create the original certificate and copy it to the clients' directories.
+
+my $cert_db = "cert_db";
+my $cert_db_path = "$d/$cert_db";
+my $cert_db_filename = "certs.db";
+my $client_dir1 = "$d/acme_client/$client1";
+my $client_dir2 = "$d/acme_client/$client2";
+my $orig_cert = "$d/orig-certificate.pem";
+my $orig_key = "$d/orig-private.key";
+my $cert1 = "$client_dir1/certificate.pem";
+my $cert_key1 = "$client_dir1/private.key";
+my $cert2 = "$client_dir2/certificate.pem";
+my $cert_key2 = "$client_dir2/private.key";
+
+mkdir($cert_db_path);
+$t->write_file("$cert_db/$cert_db_filename", '');
+
+make_path($client_dir1);
+make_path($client_dir2);
+
+$t->write_file('openssl.conf', <<EOF);
+[v3_req]
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+subjectAltName = \@alt_names
+[alt_names]
+DNS.1 = $domain1
+DNS.2 = $domain2
+[ca]
+default_ca = my_default_ca
+[my_default_ca]
+new_certs_dir = $cert_db_path
+database      = $cert_db_path/$cert_db_filename
+default_md    = default
+rand_serial   = 1
+policy        = my_ca_policy
+copy_extensions = copy
+email_in_dn   = no
+default_days  = 365
+[my_ca_policy]
+EOF
+
+# how long the original certificate lives before we renew it (sec)
+my $orig_validity_time = 15;
+
+my $enddate = strftime("%y%m%d%H%M%SZ", gmtime(time() + $orig_validity_time));
+
+system("openssl genrsa -out $d/ca.key 4096 2>/dev/null") == 0
+	&& system("openssl req -new -x509 -nodes -days 3650 "
+		. "-subj '/CN=Original Test CA' -key $d/ca.key -out $d/ca.crt") == 0
+	&& system("openssl req -new -nodes -out $d/csr.pem -newkey rsa:4096 "
+		. "-keyout $orig_key -subj '/CN=Original Test CA' 2>/dev/null") == 0
+	&& system("openssl ca -batch -notext -config $d/openssl.conf "
+		. "-extensions v3_req -startdate 250101080000Z -enddate $enddate "
+		. "-out $orig_cert -cert $d/ca.crt -keyfile $d/ca.key "
+		. "-in $d/csr.pem 2>/dev/null") == 0
+	|| die("Can't create the original certificate: $!");
+
+copy($orig_cert, $cert1) && copy($orig_key, $cert_key1)
+	&& copy($orig_cert, $cert2) && copy($orig_key, $cert_key2)
+	|| die("Can't copy the original certificate/key: $!");
+
 challtestsrv_start($t);
 pebble_start($t);
 
 $t->try_run('variables in "ssl_certificate" and "ssl_certificate_key" '
 	. 'directives are not supported on this platform', 1);
 
-$t->plan(1);
+$t->plan(4);
 
-subtest 'obtaining and renewing a certificate' => sub {
-	my $cert_file = "$d/acme_client/test/certificate.pem";
+my $renewed1 = 0;
+my $renewed2 = 0;
+my $renewed_on_load = 0;
+my $renewed_as_scheduled = 0;
 
-	# First, obtain the certificate.
+for (1 .. 30) {
+	if (!$renewed1) {
+		my $s = `openssl x509 -in $cert1 -issuer -noout`;
 
-	my $obtained = 0;
-	my $obtained_enddate = '';
-
-	for (1 .. 30) {
-		if (-e $cert_file && -s $cert_file) {
-			$obtained_enddate
-				= `openssl x509 -in $cert_file -enddate -noout | cut -d= -f 2`;
-
-			if ($obtained_enddate ne '') {
-				chomp $obtained_enddate;
-
-				my $s = strftime("%H:%M:%S GMT", gmtime());
-				note("$0: obtained certificate on $s; "
-					. "enddate: $obtained_enddate\n");
-
-				$obtained = 1;
-				last;
-			}
-		}
-
-		sleep 1;
-	}
-
-	ok($obtained, 'obtained certificate')
-		or return 0;
-
-	# Then try to use it.
-
-	like(http_get('/', SSL => 1), qr/SECURED/, 'used certificate');
-
-	# Finally, renew the certificate.
-
-	my $renewed = 0;
-	my $renewed_enddate = '';
-
-	for (1 .. 40) {
-		sleep 1;
-
-		$renewed_enddate
-			= `openssl x509 -in $cert_file -enddate -noout | cut -d= -f 2`;
-
-		next if $renewed_enddate eq '';
-
-		chomp $renewed_enddate;
-
-		if ($renewed_enddate ne $obtained_enddate) {
-			my $s = strftime("%H:%M:%S GMT", gmtime());
-			note("$0: renewed certificate on $s; enddate: $renewed_enddate\n");
-
-			$renewed = 1;
-			last;
+		if ($s =~ /^issuer.*pebble/i) {
+			$renewed1 = time();
 		}
 	}
 
-	ok($renewed, 'renewed certificate');
-};
+	if (!$renewed2) {
+		my $s = `openssl x509 -in $cert2 -issuer -noout`;
+
+		if ($s =~ /^issuer.*pebble/i) {
+			$renewed2 = time();
+		}
+	}
+
+	last if $renewed1 && $renewed2;
+
+	sleep 1;
+}
+
+$t->stop();
+
+my $s = $t->read_file('acme.log');
+
+if ($renewed1) {
+	$renewed_on_load = $s =~ /
+		forced\srenewal\sof\scertificate,\s
+		renewal\sscheduled\snow,\sACME\sclient:\stest1
+	/x;
+}
+
+if ($renewed2) {
+	my $ts = $1
+		if $s =~ /
+			valid\scertificate,\srenewal\sscheduled\s
+			([[:alpha:]]+\s+[[:alpha:]]+\s+\d+\s+\d+\:\d+\:\d+\s+\d+),\s
+			ACME\sclient:\stest2
+		/x;
+
+	my $t1 = Date::Parse::str2time($ts) // 0;
+
+	$ts = `openssl x509 -in $orig_cert -noout -enddate`;
+	$ts =~ s/notAfter=//;
+
+	chomp $ts;
+
+	my $t2 = Date::Parse::str2time($ts) // 0;
+
+	$renewed_as_scheduled = ($t1 != 0) && ($t1 == $t2);
+}
+
+ok($renewed1, "client1: certificate renewed");
+ok($renewed_on_load, "client1: certificate renewed on load");
+ok($renewed2, "client2: certificate renewed");
+ok($renewed_as_scheduled, "client2: certificate renewed as scheduled");
 
 ###############################################################################
 
@@ -243,7 +346,6 @@ W8zIG6H9SVKkAznM2yfYhW8v2ktcaZ95/OBHY97ZIw==
 -----END CERTIFICATE-----
 EOF
 
-
 	my $pebble_config = 'pebble-config.json';
 
 	$t->write_file($pebble_config, <<"EOF");
@@ -262,14 +364,14 @@ EOF
         "authz": 3,
         "order": 5
     },
-    "certificateValidityPeriod": 10
+    "certificateValidityPeriod": 120
   }
 }
 EOF
 
 	# Percentage of valid nonces that will be rejected by the server.
-	# The default value is 5, and we don't want any of the nonces
-	# to be rejected unless explicitly specified.
+	# The default value is 5, and we don't want any of the nonces to be rejected
+	# unless explicitly specified.
 	if (!defined $ENV{PEBBLE_WFE_NONCEREJECT}) {
 		$ENV{PEBBLE_WFE_NONCEREJECT} = 0;
 	}
@@ -289,15 +391,17 @@ sub challtestsrv_start {
 
 	$t->run_daemon($challtestsrv,
 		'-management', ":$challtestsrv_mgmt_port",
-		'-defaultIPv6', '',
+		'-defaultIPv6', "",
 		'-dns01', ":$dns_port",
-		'-http01', '',
-		'-https01', '',
-		'-doh', '',
-		'-tlsalpn01', '',
+		'-http01', "",
+		'-https01', "",
+		'-doh', "",
+		'-tlsalpn01', "",
 	);
 
 	$t->waitforsocket("0.0.0.0:$challtestsrv_mgmt_port")
 		or die("Couldn't start challtestsrv");
 }
+
+###############################################################################
 
