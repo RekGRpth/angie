@@ -4,8 +4,8 @@
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
-# Tests for dynamic upstream configuration with re-resolvable servers.
-# Ensure that dns updates are properly applied.
+# Stream tests for dynamic upstream configuration with service (SRV) feature.
+# Ensure that upstream configuration is inherited on reload.
 
 ###############################################################################
 
@@ -20,18 +20,16 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
 use Test::Nginx;
+use Test::Nginx::Stream qw/ stream /;
 
 ###############################################################################
 
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy upstream_zone/);
+plan(skip_all => 'win32') if $^O eq 'MSWin32';
 
-$t->skip_errors_check('crit',
-	qr/connect\(\) to \[fe80::1\]:\d{4,} failed/,
-	qr/connect\(\) to \[fe80::2\]:\d{4,} failed/
-);
+my $t = Test::Nginx->new()->has(qw/stream stream_upstream_zone/);
 
 $t->skip_errors_check('crit', "Can't assign requested address")
 	if $^O eq 'freebsd';
@@ -45,138 +43,103 @@ daemon off;
 events {
 }
 
-http {
-    %%TEST_GLOBALS_HTTP%%
+stream {
+    %%TEST_GLOBALS_STREAM%%
 
     upstream u {
         zone z 1m;
-        server example.net:%%PORT_8080%% resolve max_fails=0;
+        server example.net resolve service=http;
     }
 
     # lower the retry timeout after empty reply
-    resolver 127.0.0.1:%%PORT_8982_UDP%% valid=1s;
+    resolver 127.0.0.1:%%PORT_8980_UDP%% valid=1s;
     # retry query shortly after DNS is started
     resolver_timeout 1s;
 
+    log_format test $upstream_addr;
+
     server {
-        listen       127.0.0.1:8080;
-        listen       [::1]:%%PORT_8080%%;
-        server_name  localhost;
-
-        location / {
-            proxy_pass http://u/t;
-            proxy_connect_timeout 50ms;
-            add_header X-IP $upstream_addr;
-            error_page 502 504 redirect;
-        }
-
-        location /2 {
-            proxy_pass http://u/t;
-            add_header X-IP $upstream_addr;
-        }
-
-        location /t { }
+        listen 127.0.0.1:8082;
+        proxy_pass u;
+        proxy_connect_timeout 50ms;
+        access_log %%TESTDIR%%/cc.log test;
     }
 }
 
 EOF
 
-port(8083);
+my $p = port(8081);
 
-$t->write_file('t', '');
-
-$t->run_daemon(\&dns_daemon, $t)->waitforfile($t->testdir . '/' . port(8982));
-$t->try_run('no resolve in upstream server')->plan(18);
+$t->run_daemon(\&dns_daemon, $t)->waitforfile($t->testdir . '/' . port(8980));
+$t->try_run('no resolve in upstream server')->plan(6);
 
 ###############################################################################
 
-my ($r, @n);
-my $p0 = port(8080);
+update_name({A => '127.0.0.201', SRV => "1 5 $p example.net"});
+stream('127.0.0.1:' . port(8082))->read();
+stream('127.0.0.1:' . port(8082))->read();
 
-update_name({A => '127.0.0.201'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'A');
-like($r, qr/127.0.0.201:$p0/, 'A 1');
+update_name({ERROR => 'SERVFAIL'}, 0);
 
-# A changed
+$t->reload();
+waitforworker($t);
 
-update_name({A => '127.0.0.202'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'A changed');
-like($r, qr/127.0.0.202:$p0/, 'A changed 1');
+stream('127.0.0.1:' . port(8082))->read();
+stream('127.0.0.1:' . port(8082))->read();
 
-# 1 more A added
+update_name({A => '127.0.0.202', SRV => "1 5 $p example.net"});
+stream('127.0.0.1:' . port(8082))->read();
+stream('127.0.0.1:' . port(8082))->read();
 
-update_name({A => '127.0.0.201 127.0.0.202'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 2, 'A A');
-like($r, qr/127.0.0.201:$p0/, 'A A 1');
-like($r, qr/127.0.0.202:$p0/, 'A A 2');
+$t->stop();
 
-# 1 A removed, 2 AAAA added
+Test::Nginx::log_core('||', $t->read_file('cc.log'));
 
-update_name({A => '127.0.0.201', AAAA => 'fe80::1 fe80::2'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 3, 'A AAAA AAAA responses');
-like($r, qr/127.0.0.201:$p0/, 'A AAAA AAAA 1');
-like($r, qr/\[fe80::1\]:$p0/, 'A AAAA AAAA 2');
-like($r, qr/\[fe80::1\]:$p0/, 'A AAAA AAAA 3');
+open my $f, '<', "${\($t->testdir())}/cc.log" or die "Can't open cc.log: $!";
 
-# all records removed
+like($f->getline(), qr/127.0.0.201:$p/, 'log - before');
+like($f->getline(), qr/127.0.0.201:$p/, 'log - before 2');
 
-update_name();
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 0, 'empty response');
+like($f->getline(), qr/127.0.0.201:$p/, 'log - preresolve');
+like($f->getline(), qr/127.0.0.201:$p/, 'log - preresolve 2');
 
-# A added after empty
-
-update_name({A => '127.0.0.201'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'A added');
-like($r, qr/127.0.0.201:$p0/, 'A added 1');
-
-# changed to CNAME
-
-update_name({CNAME => 'alias'}, 4);
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'CNAME');
-like($r, qr/127.0.0.203:$p0/, 'CNAME 1');
-
-# bad DNS reply should not affect existing upstream configuration
-
-update_name({ERROR => 'SERVFAIL'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'ERROR');
-like($r, qr/127.0.0.203:$p0/, 'ERROR 1');
-update_name({A => '127.0.0.1'});
+like($f->getline(), qr/127.0.0.202:$p/, 'log - update');
+like($f->getline(), qr/127.0.0.202:$p/, 'log - update 2');
 
 ###############################################################################
+
+sub waitforworker {
+	my ($t) = @_;
+
+	for (1 .. 30) {
+		last if $t->read_file('error.log') =~ /exited with code/;
+		select undef, undef, undef, 0.2;
+	}
+}
 
 sub update_name {
 	my ($name, $plan) = @_;
 
-	$plan = 2 if !defined $plan;
+	$plan = 3 if !defined $plan;
 
 	sub sock {
 		IO::Socket::INET->new(
 			Proto => 'tcp',
-			PeerAddr => '127.0.0.1:' . port(8083)
+			PeerAddr => '127.0.0.1:' . port(8081)
 		)
 			or die "Can't connect to nginx: $!\n";
 	}
 
 	$name->{A} = '' unless $name->{A};
-	$name->{AAAA} = '' unless $name->{AAAA};
-	$name->{CNAME} = '' unless $name->{CNAME};
 	$name->{ERROR} = '' unless $name->{ERROR};
+	$name->{SRV} = '' unless $name->{SRV};
 
 	my $req =<<EOF;
 GET / HTTP/1.0
 Host: localhost
 X-A: $name->{A}
-X-AAAA: $name->{AAAA}
-X-CNAME: $name->{CNAME}
 X-ERROR: $name->{ERROR}
+X-SRV: $name->{SRV}
 
 EOF
 
@@ -202,15 +165,14 @@ sub reply_handler {
 	use constant NXDOMAIN	=> 3;
 
 	use constant A		=> 1;
-	use constant CNAME	=> 5;
-	use constant AAAA	=> 28;
-	use constant DNAME	=> 39;
+	use constant SRV	=> 33;
 	use constant IN		=> 1;
 
 	# default values
 
-	my ($hdr, $rcode, $ttl) = (0x8180, NOERROR, 1);
-	$h = {A => [ "127.0.0.201" ]} unless defined $h;
+	my ($hdr, $rcode, $ttl, $port) = (0x8180, NOERROR, 3600, port(8080));
+	$h = {A => [ "127.0.0.201" ], SRV => [ "1 5 $port example.net" ]}
+		unless defined $h;
 
 	# decode name
 
@@ -232,23 +194,12 @@ sub reply_handler {
 		goto bad;
 	}
 
-	if ($name eq 'example.net') {
-		if ($type == A && $h->{A}) {
-			map { push @rdata, rd_addr($ttl, $_) } @{$h->{A}};
-		}
-		if ($type == AAAA && $h->{AAAA}) {
-			map { push @rdata, rd_addr6($ttl, $_) } @{$h->{AAAA}};
-		}
-		my $cname = defined $h->{CNAME} ? $h->{CNAME} : 0;
-		if ($cname) {
-			push @rdata, pack("n3N nCa5n", 0xc00c, CNAME, IN, $ttl,
-				8, 5, $cname, 0xc00c);
-		}
+	if ($name eq '_http._tcp.example.net' && $type == SRV && $h->{SRV}) {
+		map { push @rdata, rd_srv($ttl, (split ' ', $_)) }
+			@{$h->{SRV}};
 
-	} elsif ($name eq 'alias.example.net') {
-		if ($type == A) {
-			push @rdata, rd_addr($ttl, '127.0.0.203');
-		}
+	} elsif ($name eq 'example.net' && $type == A && $h->{A}) {
+		map { push @rdata, rd_addr($ttl, $_) } @{$h->{A}};
 	}
 
 bad:
@@ -260,6 +211,15 @@ bad:
 		0, 0, @name, $type, $class) . join('', @rdata);
 }
 
+sub rd_srv {
+	my ($ttl, $pri, $w, $port, $name) = @_;
+	my @rdname = split /\./, $name;
+	my $rdlen = length(join '', @rdname) + @rdname + 7;	# pri w port x
+
+	pack 'n3N n n3 (C/a*)* x',
+		0xc00c, SRV, IN, $ttl, $rdlen, $pri, $w, $port, @rdname;
+}
+
 sub rd_addr {
 	my ($ttl, $addr) = @_;
 
@@ -268,34 +228,20 @@ sub rd_addr {
 	pack 'n3N nC4', 0xc00c, A, IN, $ttl, eval "scalar $code", eval($code);
 }
 
-sub expand_ip6 {
-	my ($addr) = @_;
-
-	substr ($addr, index($addr, "::"), 2) =
-		join "0", map { ":" } (0 .. 8 - (split /:/, $addr) + 1);
-	map { hex "0" x (4 - length $_) . "$_" } split /:/, $addr;
-}
-
-sub rd_addr6 {
-	my ($ttl, $addr) = @_;
-
-	pack 'n3N nn8', 0xc00c, AAAA, IN, $ttl, 16, expand_ip6($addr);
-}
-
 sub dns_daemon {
 	my ($t) = @_;
 	my ($data, $recv_data, $h);
 
 	my $socket = IO::Socket::INET->new(
 		LocalAddr => '127.0.0.1',
-		LocalPort => port(8982),
-		Proto=> 'udp',
+		LocalPort => port(8980),
+		Proto => 'udp',
 	)
 		or die "Can't create listening socket: $!\n";
 
 	my $control = IO::Socket::INET->new(
 		Proto => 'tcp',
-		LocalHost => "127.0.0.1:" . port(8083),
+		LocalHost => "127.0.0.1:" . port(8081),
 		Listen => 5,
 		Reuse => 1
 	)
@@ -307,7 +253,7 @@ sub dns_daemon {
 
 	# signal we are ready
 
-	open my $fh, '>', $t->testdir() . '/' . port(8982);
+	open my $fh, '>', $t->testdir() . '/' . port(8980);
 	close $fh;
 	my $cnt = 0;
 
@@ -354,10 +300,8 @@ sub process_name {
 
 	$headers =~ /X-A: (.*)$/m;
 	map { push @{$h{A}}, $_ } split(/ /, $1);
-	$headers =~ /X-AAAA: (.*)$/m;
-	map { push @{$h{AAAA}}, $_ } split(/ /, $1);
-	$headers =~ /X-CNAME: (.*)$/m;
-	$h{CNAME} = $1;
+	$headers =~ /X-SRV: (.*)$/m;
+	map { push @{$h{SRV}}, $_ } split(/;/, $1);
 	$headers =~ /X-ERROR: (.*)$/m;
 	$h{ERROR} = $1;
 

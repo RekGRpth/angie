@@ -4,7 +4,7 @@
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
-# Tests for dynamic upstream configuration with re-resolvable servers.
+# Stream tests for dynamic upstream configuration with re-resolvable servers.
 # Ensure that dns updates are properly applied.
 
 ###############################################################################
@@ -20,13 +20,14 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
 use Test::Nginx;
+use Test::Nginx::Stream qw/ stream /;
 
 ###############################################################################
 
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy upstream_zone/);
+my $t = Test::Nginx->new()->has(qw/stream stream_upstream_zone/);
 
 $t->skip_errors_check('crit',
 	qr/connect\(\) to \[fe80::1\]:\d{4,} failed/,
@@ -45,8 +46,8 @@ daemon off;
 events {
 }
 
-http {
-    %%TEST_GLOBALS_HTTP%%
+stream {
+    %%TEST_GLOBALS_STREAM%%
 
     upstream u {
         zone z 1m;
@@ -54,101 +55,112 @@ http {
     }
 
     # lower the retry timeout after empty reply
-    resolver 127.0.0.1:%%PORT_8982_UDP%% valid=1s;
+    resolver 127.0.0.1:%%PORT_8983_UDP%% valid=1s;
     # retry query shortly after DNS is started
     resolver_timeout 1s;
 
+    log_format test $upstream_addr;
+
     server {
-        listen       127.0.0.1:8080;
-        listen       [::1]:%%PORT_8080%%;
-        server_name  localhost;
-
-        location / {
-            proxy_pass http://u/t;
-            proxy_connect_timeout 50ms;
-            add_header X-IP $upstream_addr;
-            error_page 502 504 redirect;
-        }
-
-        location /2 {
-            proxy_pass http://u/t;
-            add_header X-IP $upstream_addr;
-        }
-
-        location /t { }
+        listen      127.0.0.1:8082;
+        proxy_pass  u;
+        access_log  %%TESTDIR%%/cc.log test;
+        proxy_next_upstream   on;
+        proxy_connect_timeout 50ms;
     }
 }
 
 EOF
 
-port(8083);
+port(8084);
 
-$t->write_file('t', '');
-
-$t->run_daemon(\&dns_daemon, $t)->waitforfile($t->testdir . '/' . port(8982));
-$t->try_run('no resolve in upstream server')->plan(18);
+$t->run_daemon(\&dns_daemon, port(8983), $t)
+	->waitforfile($t->testdir . '/' . port(8983));
+$t->try_run('no resolve in upstream server')->plan(11);
 
 ###############################################################################
 
-my ($r, @n);
 my $p0 = port(8080);
 
 update_name({A => '127.0.0.201'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'A');
-like($r, qr/127.0.0.201:$p0/, 'A 1');
+stream('127.0.0.1:' . port(8082))->read();
 
 # A changed
 
 update_name({A => '127.0.0.202'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'A changed');
-like($r, qr/127.0.0.202:$p0/, 'A changed 1');
+stream('127.0.0.1:' . port(8082))->read();
 
 # 1 more A added
 
 update_name({A => '127.0.0.201 127.0.0.202'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 2, 'A A');
-like($r, qr/127.0.0.201:$p0/, 'A A 1');
-like($r, qr/127.0.0.202:$p0/, 'A A 2');
+stream('127.0.0.1:' . port(8082))->read();
 
 # 1 A removed, 2 AAAA added
 
 update_name({A => '127.0.0.201', AAAA => 'fe80::1 fe80::2'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 3, 'A AAAA AAAA responses');
-like($r, qr/127.0.0.201:$p0/, 'A AAAA AAAA 1');
-like($r, qr/\[fe80::1\]:$p0/, 'A AAAA AAAA 2');
-like($r, qr/\[fe80::1\]:$p0/, 'A AAAA AAAA 3');
+stream('127.0.0.1:' . port(8082))->read();
 
 # all records removed
 
 update_name();
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 0, 'empty response');
+stream('127.0.0.1:' . port(8082))->read();
 
 # A added after empty
 
 update_name({A => '127.0.0.201'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'A added');
-like($r, qr/127.0.0.201:$p0/, 'A added 1');
+stream('127.0.0.1:' . port(8082))->read();
 
 # changed to CNAME
 
 update_name({CNAME => 'alias'}, 4);
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'CNAME');
-like($r, qr/127.0.0.203:$p0/, 'CNAME 1');
+stream('127.0.0.1:' . port(8082))->read();
 
 # bad DNS reply should not affect existing upstream configuration
 
 update_name({ERROR => 'SERVFAIL'});
-$r = http_get('/');
-is(@n = $r =~ /:$p0/g, 1, 'ERROR');
-like($r, qr/127.0.0.203:$p0/, 'ERROR 1');
-update_name({A => '127.0.0.1'});
+stream('127.0.0.1:' . port(8082))->read();
+
+$t->stop();
+
+Test::Nginx::log_core('||', $t->read_file('cc.log'));
+
+open my $f, '<', "${\($t->testdir())}/cc.log" or die "Can't open cc.log: $!";
+my $line;
+
+like($f->getline(), qr/127.0.0.201:$p0/, 'log - A');
+
+# A changed
+
+like($f->getline(), qr/127.0.0.202:$p0/, 'log - A changed');
+
+# 1 more A added
+
+$line = $f->getline();
+like($line, qr/127.0.0.201:$p0/, 'log - A A 1');
+like($line, qr/127.0.0.202:$p0/, 'log - A A 2');
+
+# 1 A removed, 2 AAAA added
+
+$line = $f->getline();
+like($line, qr/127.0.0.201:$p0/, 'log - A AAAA AAAA 1');
+like($line, qr/\[fe80::1\]:$p0/, 'log - A AAAA AAAA 2');
+like($line, qr/\[fe80::2\]:$p0/, 'log - A AAAA AAAA 3');
+
+# all records removed
+
+like($f->getline(), qr/^u$/, 'log - empty response');
+
+# A added after empty
+
+like($f->getline(), qr/127.0.0.201:$p0/, 'log - A added 1');
+
+# changed to CNAME
+
+like($f->getline(), qr/127.0.0.203:$p0/, 'log - CNAME 1');
+
+# bad DNS reply should not affect existing upstream configuration
+
+like($f->getline(), qr/127.0.0.203:$p0/, 'log - ERROR 1');
 
 ###############################################################################
 
@@ -160,7 +172,7 @@ sub update_name {
 	sub sock {
 		IO::Socket::INET->new(
 			Proto => 'tcp',
-			PeerAddr => '127.0.0.1:' . port(8083)
+			PeerAddr => '127.0.0.1:' . port(8084)
 		)
 			or die "Can't connect to nginx: $!\n";
 	}
@@ -283,19 +295,19 @@ sub rd_addr6 {
 }
 
 sub dns_daemon {
-	my ($t) = @_;
+	my ($port, $t) = @_;
 	my ($data, $recv_data, $h);
 
 	my $socket = IO::Socket::INET->new(
 		LocalAddr => '127.0.0.1',
-		LocalPort => port(8982),
-		Proto=> 'udp',
+		LocalPort => $port,
+		Proto => 'udp',
 	)
 		or die "Can't create listening socket: $!\n";
 
 	my $control = IO::Socket::INET->new(
 		Proto => 'tcp',
-		LocalHost => "127.0.0.1:" . port(8083),
+		LocalHost => '127.0.0.1:' . port(8084),
 		Listen => 5,
 		Reuse => 1
 	)
@@ -307,7 +319,7 @@ sub dns_daemon {
 
 	# signal we are ready
 
-	open my $fh, '>', $t->testdir() . '/' . port(8982);
+	open my $fh, '>', $t->testdir() . '/' . $port;
 	close $fh;
 	my $cnt = 0;
 
