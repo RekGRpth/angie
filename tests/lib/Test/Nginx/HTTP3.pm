@@ -49,6 +49,7 @@ sub new {
 	$self->{ciphers} = $extra{ciphers} || "\x13\x01";
 	$self->{group} = $extra{group} || 'x25519';
 	$self->{opts} = $extra{opts};
+	$self->{chaining} = $extra{start_chain} || 0;
 
 	$self->{zero} = pack("x5");
 
@@ -246,7 +247,7 @@ sub handshake {
 		"resumption = " . unpack("H*", $self->{rms_prk}));
 
 	my $crypto = build_crypto($finished);
-	$self->{socket}->syswrite($self->encrypt_aead($crypto, 2));
+	$self->raw_write($crypto, 2);
 }
 
 sub DESTROY {
@@ -1333,13 +1334,14 @@ sub dehuff {
 }
 
 sub raw_write {
-	my ($self, $message) = @_;
+	my ($self, $message, $level) = @_;
+	$level = 3 if !defined $level;
 
 	if ($self->{chaining}) {
-		return add_chain($self, $message);
+		return add_chain($self, $message, $level);
 	}
 
-	$self->{socket}->syswrite($self->encrypt_aead($message, 3));
+	$self->{socket}->syswrite($self->encrypt_aead($message, $level));
 }
 
 sub start_chain {
@@ -1349,12 +1351,12 @@ sub start_chain {
 }
 
 sub add_chain {
-	my ($self, $buf) = @_;
+	my ($self, $buf, $level) = @_;
 
-	if ($self->{chained_buf}) {
-		$self->{chained_buf} .= $buf;
+	if ($self->{chained_buf}{$level}) {
+		$self->{chained_buf}{$level} .= $buf;
 	} else {
-		$self->{chained_buf} = $buf;
+		$self->{chained_buf}{$level} = $buf;
 	}
 }
 
@@ -1362,7 +1364,11 @@ sub send_chain {
 	my ($self) = @_;
 
 	undef $self->{chaining};
-	$self->raw_write($self->{chained_buf}) if $self->{chained_buf};
+	my $buf = join '', map {
+		$self->encrypt_aead($self->{chained_buf}{$_}, $_)
+			if defined $self->{chained_buf}{$_}
+	} 0 .. 3;
+	$self->{socket}->syswrite($buf) if $buf;
 	undef $self->{chained_buf};
 }
 
