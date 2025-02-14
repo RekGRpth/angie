@@ -155,7 +155,6 @@ struct ngx_acme_client_s {
     ngx_log_t                  *log;
     ngx_str_t                   name;
     ngx_str_t                   path;
-    ngx_uint_t                  enabled;
     ngx_uint_t                  cf_line;
     ngx_str_t                   cf_filename;
     ngx_str_t                   server;
@@ -178,7 +177,9 @@ struct ngx_acme_client_s {
     ngx_http_acme_sh_cert_t    *sh_cert;
     ngx_http_core_loc_conf_t   *hook_clcf;
     ngx_http_conf_ctx_t        *hook_ctx;
-    ngx_uint_t                  renew_on_load;
+
+    unsigned                    enabled:1;
+    unsigned                    renew_on_load:1;
 };
 
 
@@ -4229,7 +4230,7 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
     size_t                       shm_size, sz;
     ngx_str_t                   *s, name;
     ngx_err_t                    err;
-    ngx_uint_t                   i, j, n;
+    ngx_uint_t                   i, j, n, valid_domains;
     ngx_acme_client_t           *cli, **cli_p;
     ngx_pool_cleanup_t          *cln;
     ngx_http_handler_pt         *h;
@@ -4280,6 +4281,7 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
                 return NGX_ERROR;
             }
 
+            valid_domains = 0;
             sn = cscf->server_names.elts;
 
             for (n = 0; n < cscf->server_names.nelts; n++) {
@@ -4299,6 +4301,8 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
                                        &cli->name);
                     continue;
                 }
+
+                valid_domains++;
 
                 s = ngx_array_push(cli->domains);
                 if (s == NULL) {
@@ -4326,6 +4330,16 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
                 s->data[0] = '*';
                 ngx_memcpy(s->data + 1, name.data, name.len);
                 s->len = name.len + 1;
+            }
+
+            if (valid_domains == 0) {
+                cf->conf_file->line = cli->cf_line;
+                cf->conf_file->file.name = cli->cf_filename;
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                              "no valid domain name defined in server block at "
+                              "%s:%ui for ACME client \"%V\"",
+                              cscf->file_name, cscf->line, &cli->name);
+                return NGX_ERROR;
             }
         }
     }
@@ -4363,7 +4377,7 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
         cli = ((ngx_acme_client_t **) amcf->clients.elts)[i];
 
         if (!cli->enabled) {
-            continue;
+            goto add_client_vars;
         }
 
         if (cli->server.len == 0) {
@@ -4374,6 +4388,19 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
             return NGX_ERROR;
         }
 
+        if (cli->domains->nelts == 0) {
+            /*
+             * The client is defined but not referenced in any of the server
+             * blocks.
+             */
+
+            cli->enabled = 0;
+
+            ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+                               "ACME client \"%V\" is defined but not used",
+                               &cli->name);
+            continue;
+        }
 
         if (cli->server_url.addrs == NULL
             && clcf->resolver->connections.nelts == 0)
@@ -4391,15 +4418,6 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
         }
 
         cli->log = &amcf->log;
-
-        if (cli->domains->nelts == 0) {
-            cf->conf_file->line = cli->cf_line;
-            cf->conf_file->file.name = cli->cf_filename;
-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                         "no valid domain name defined for ACME client \"%V\"",
-                         &cli->name);
-            return NGX_ERROR;
-        }
 
         if (ngx_http_acme_full_path(cf->pool, &amcf->path, &cli->name,
                                     &cli->path)
@@ -4485,6 +4503,14 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
         sz = sizeof(ngx_http_acme_sh_cert_t) + cli->max_cert_size + 5;
 
         shm_size += ngx_align(sz, NGX_ALIGNMENT);
+
+add_client_vars:
+
+        for (v = ngx_http_acme_vars; v->name.len; v++) {
+            if (ngx_http_acme_add_client_var(cf, cli, v) != NGX_OK) {
+                return NGX_ERROR;
+            }
+        }
     }
 
     if (amcf->handle_challenge) {
@@ -4523,17 +4549,19 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
         shm_size += ngx_align(sz, NGX_ALIGNMENT);
     }
 
-    ngx_str_set(&name, "acme_shm");
+    if (shm_size != 0) {
+        ngx_str_set(&name, "acme_shm");
 
-    amcf->shm_zone = ngx_shared_memory_add(cf, &name, shm_size, 0);
-    if (amcf->shm_zone == NULL) {
-        return NGX_ERROR;
+        amcf->shm_zone = ngx_shared_memory_add(cf, &name, shm_size, 0);
+        if (amcf->shm_zone == NULL) {
+            return NGX_ERROR;
+        }
+
+        amcf->shm_zone->init = ngx_http_acme_shm_init;
+        amcf->shm_zone->data = amcf;
+        amcf->shm_zone->noslab = 1;
+        amcf->shm_zone->noreuse = 1;
     }
-
-    amcf->shm_zone->init = ngx_http_acme_shm_init;
-    amcf->shm_zone->data = amcf;
-    amcf->shm_zone->noslab = 1;
-    amcf->shm_zone->noreuse = 1;
 
     ngx_str_set(&name, "__acme_server");
 
@@ -4555,8 +4583,10 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
         v->data = var->data;
     }
 
-    ngx_http_next_header_filter = ngx_http_top_header_filter;
-    ngx_http_top_header_filter = ngx_http_acme_header_filter;
+    if (shm_size != 0) {
+        ngx_http_next_header_filter = ngx_http_top_header_filter;
+        ngx_http_top_header_filter = ngx_http_acme_header_filter;
+    }
 
     return NGX_OK;
 }
@@ -5614,8 +5644,6 @@ ngx_http_acme_client(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_OK;
     }
 
-    ngx_conf_init_uint_value(cli->enabled, 1);
-
     if (cli->private_key.type == NGX_KT_UNSUPPORTED) {
         cli->private_key.type = NGX_KT_EC;
     }
@@ -5649,16 +5677,6 @@ ngx_http_acme_client(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     {
         return "has an unsupported key_type/key_bits combination";
     }
-
-    ngx_conf_init_value(cli->renew_before_expiry, 60 * 60 * 24 * 30);
-
-    ngx_conf_init_value(cli->retry_after_error, 60 * 60 * 2)
-
-    ngx_conf_init_size_value(cli->max_cert_size, 8 * 1024);
-
-    ngx_conf_init_uint_value(cli->challenge, NGX_AC_HTTP_01);
-
-    ngx_conf_init_uint_value(cli->renew_on_load, 0);
 
     ngx_memzero(&u, sizeof(ngx_url_t));
 
@@ -6014,7 +6032,7 @@ ngx_http_acme(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     cli_p = ngx_array_push(&ascf->clients);
     if (cli_p == NULL) {
-        return NULL;
+        return NGX_CONF_ERROR;
     }
 
     *cli_p = cli;
@@ -6055,7 +6073,6 @@ ngx_acme_client_add(ngx_conf_t *cf, ngx_str_t *name)
 {
     ngx_uint_t                  i;
     ngx_acme_client_t          *cli, **cli_p;
-    ngx_http_variable_t        *v;
     ngx_http_acme_main_conf_t  *amcf;
 
     if (name->len == 0) {
@@ -6084,7 +6101,7 @@ ngx_acme_client_add(ngx_conf_t *cf, ngx_str_t *name)
 
     cli->log = cf->log;
     cli->name = *name;
-    cli->enabled = NGX_CONF_UNSET_UINT;
+    cli->enabled = 1;
     cli->cf_line = cf->conf_file->line;
     cli->cf_filename = cf->conf_file->file.name;
 
@@ -6093,22 +6110,16 @@ ngx_acme_client_add(ngx_conf_t *cf, ngx_str_t *name)
         return NULL;
     }
 
-    cli->renew_before_expiry = NGX_CONF_UNSET;
-    cli->retry_after_error = NGX_CONF_UNSET;
-    cli->max_cert_size = NGX_CONF_UNSET_SIZE;
-    cli->challenge = NGX_CONF_UNSET_UINT;
-    cli->renew_on_load = NGX_CONF_UNSET_UINT;
+    cli->renew_before_expiry = 60 * 60 * 24 * 30;
+    cli->retry_after_error = 60 * 60 * 2;
+    cli->max_cert_size = 8 * 1024;
+    cli->challenge = NGX_AC_HTTP_01;
+    cli->renew_on_load = 0;
     cli->account_key.file.fd = NGX_INVALID_FILE;
     cli->private_key.file.fd = NGX_INVALID_FILE;
     cli->private_key.type = NGX_KT_UNSUPPORTED;
     cli->private_key.bits = NGX_CONF_UNSET;
     cli->certificate_file.fd = NGX_INVALID_FILE;
-
-    for (v = ngx_http_acme_vars; v->name.len; v++) {
-        if (ngx_http_acme_add_client_var(cf, cli, v) != NGX_OK) {
-            return NULL;
-        }
-    }
 
     cli_p = ngx_array_push(&amcf->clients);
     if (cli_p == NULL) {
