@@ -209,29 +209,10 @@ again:
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0,
                        "sticky: found matching peer %ui", i);
 
-        rrp->current = peer;
-        ngx_http_upstream_rr_peer_ref(peers, peer);
-
-        pc->sockaddr = peer->sockaddr;
-        pc->socklen = peer->socklen;
-        pc->name = &peer->name;
-        pc->sid = peer->sid;
-
-        peer->conns++;
-
-        if (now - peer->checked > peer->fail_timeout) {
-            peer->checked = now;
-        }
-
-#if (NGX_API && NGX_HTTP_UPSTREAM_ZONE)
-        peer->stats.requests++;
-        peer->stats.selected = now;
-#endif
+        ngx_http_upstream_use_rr_peer(pc, rrp, peer, i);
 
         ngx_http_upstream_rr_peer_unlock(peers, peer);
         ngx_http_upstream_rr_peers_unlock(peers);
-
-        rrp->tried[n] |= m;
 
         return NGX_OK;
     }
@@ -324,6 +305,9 @@ static ngx_int_t
 ngx_http_upstream_init_sticky_peer(ngx_http_request_t *r,
     ngx_http_upstream_srv_conf_t *us)
 {
+    ngx_int_t                             *vars;
+    ngx_uint_t                             i;
+    ngx_http_variable_value_t             *vv;
     ngx_http_upstream_sticky_srv_conf_t   *scf;
     ngx_http_upstream_sticky_peer_data_t  *sp;
 
@@ -346,33 +330,6 @@ ngx_http_upstream_init_sticky_peer(ngx_http_request_t *r,
     sp->original_get_peer = r->upstream->peer.get;
     r->upstream->peer.get = ngx_http_upstream_get_sticky_peer;
 
-    return NGX_OK;
-}
-
-
-static ngx_int_t
-ngx_http_upstream_get_sticky_peer(ngx_peer_connection_t *pc, void *data)
-{
-    ngx_http_upstream_rr_peer_data_t  *rrp = data;
-
-    ngx_int_t                              rc, *vars;
-    ngx_uint_t                             i;
-    ngx_http_request_t                    *r;
-    ngx_http_variable_value_t             *vv;
-    ngx_http_upstream_sticky_srv_conf_t   *scf;
-    ngx_http_upstream_sticky_peer_data_t  *sp;
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0, "sticky: get peer");
-
-    pc->cached = 0;
-    pc->connection = NULL;
-
-    r = pc->ctx;
-
-    sp = ngx_http_get_module_ctx(r, ngx_http_upstream_sticky_module);
-
-    scf = ngx_http_conf_upstream_srv_conf(r->upstream->upstream,
-                                          ngx_http_upstream_sticky_module);
     sp->hint.len = 0;
 
     vars = scf->lookup_vars.elts;
@@ -388,7 +345,7 @@ ngx_http_upstream_get_sticky_peer(ngx_peer_connection_t *pc, void *data)
         sp->hint.data = vv->data;
         sp->hint.len = vv->len;
 
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "sticky: extracted hint %V from variable %ui",
                        &sp->hint, i);
         break;
@@ -402,6 +359,32 @@ ngx_http_upstream_get_sticky_peer(ngx_peer_connection_t *pc, void *data)
     } else {
         sp->salt.len = 0;
     }
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_upstream_get_sticky_peer(ngx_peer_connection_t *pc, void *data)
+{
+    ngx_http_upstream_rr_peer_data_t  *rrp = data;
+
+    ngx_int_t                              rc;
+    ngx_http_request_t                    *r;
+    ngx_http_upstream_sticky_srv_conf_t   *scf;
+    ngx_http_upstream_sticky_peer_data_t  *sp;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0, "sticky: get peer");
+
+    r = pc->ctx;
+
+    pc->cached = 0;
+    pc->connection = NULL;
+
+    sp = ngx_http_get_module_ctx(r, ngx_http_upstream_sticky_module);
+
+    scf = ngx_http_conf_upstream_srv_conf(r->upstream->upstream,
+                                          ngx_http_upstream_sticky_module);
 
     rc = ngx_http_upstream_sticky_select_peer(rrp, sp, pc);
 
@@ -446,12 +429,8 @@ ngx_http_upstream_sticky_set_cookie(ngx_http_request_t *r,
     ngx_http_complex_value_t  *attr;
 
     if (scf->secret) {
-        if (ngx_http_complex_value(r, scf->secret, &value) != NGX_OK) {
-            return NGX_ERROR;
-        }
-
         tmp.data = hashed;
-        tmp.len = ngx_http_upstream_sticky_hash(sid, &value, hashed);
+        tmp.len = ngx_http_upstream_sticky_hash(sid, &sp->salt, hashed);
 
         sid = &tmp;
     }
