@@ -134,7 +134,7 @@ fi
 
 
 ngx_feature="crypt()"
-ngx_feature_name=
+ngx_feature_name="NGX_HAVE_CRYPT"
 ngx_feature_run=no
 ngx_feature_incs=
 ngx_feature_path=
@@ -146,7 +146,7 @@ ngx_feature_test="crypt(\"test\", \"salt\");"
 if [ $ngx_found = no ]; then
 
     ngx_feature="crypt() in libcrypt"
-    ngx_feature_name=
+    ngx_feature_name="NGX_HAVE_CRYPT"
     ngx_feature_run=no
     ngx_feature_incs=
     ngx_feature_path=
@@ -533,6 +533,17 @@ ngx_feature_test="socklen_t optlen = sizeof(struct tcp_info);
                   ti.tcpi_snd_cwnd = 0;
                   ti.tcpi_rcv_space = 0;
                   getsockopt(0, IPPROTO_TCP, TCP_INFO, &ti, &optlen)"
+. auto/feature
+
+
+ngx_feature="IPPROTO_MPTCP"
+ngx_feature_name="NGX_HAVE_MULTIPATH"
+ngx_feature_run=no
+ngx_feature_incs="#include <sys/socket.h>
+                  #include <netinet/in.h>"
+ngx_feature_path=
+ngx_feature_libs=
+ngx_feature_test="socket(0, 0, IPPROTO_MPTCP)"
 . auto/feature
 
 

@@ -7,6 +7,39 @@
 
 <changes ver="1.10.0" date="">
 
+<change type="feature">
+<para lang="ru">
+поддержка приема соединений по протоколу MPTCP, включаемая с помощью опции
+"multipath" директивы "listen".<br/>
+Спасибо Максиму Дунину (freenginx), Максиму Дурову и Энтони Дорену.
+</para>
+<para lang="en">
+support for handling MPTCP connections with the "multipath" parameter of
+the "listen" directive.<br/>
+Thanks to Maxim Dounin (freenginx), Maxime Dourov, and Anthony Doeraene.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+вся функциональность nginx 1.27.5.
+</para>
+<para lang="en">
+all functionality of nginx 1.27.5.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+HTTP/3 запросы могли зависать и завершаться по таймауту.
+исправление портировано из nginx 1.29.0.
+</para>
+<para lang="en">
+</para>
+HTTP/3 requests might stall and timeout.
+the fix was ported from nginx 1.29.0.
+</change>
+
 </changes>
 
 
@@ -131,6 +164,16 @@ references an ACME client using the "acme" directive.
 <para lang="en">
 if built with NTLS support, inheritance of the "proxy_ssl_certificate" and
 "proxy_ssl_certificate_key" directives with variables did not work properly.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+количество активных запросов могло быть некорректным при использовании
+клиентских HTTP/3 запросов.
+</para>
+<para lang="en">
+active request count might be incorrect when using HTTP/3 client requests.
 </para>
 </change>
 

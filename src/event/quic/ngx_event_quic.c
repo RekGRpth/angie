@@ -531,6 +531,10 @@ ngx_quic_client_start(ngx_connection_t *c, ngx_quic_header_t *pkt)
 
     ngx_quic_congestion_reset(qc);
 
+    qc->max_frames = (qc->conf->max_concurrent_streams_uni
+                      + qc->conf->max_concurrent_streams_bidi)
+                     * qc->conf->stream_buffer_size / 2000;
+
     if (qc->pto.timer_set) {
         ngx_del_timer(&qc->pto);
     }
@@ -659,6 +663,10 @@ ngx_quic_new_connection(ngx_connection_t *c, ngx_quic_conf_t *conf,
 
     ngx_quic_congestion_reset(qc);
 
+    qc->max_frames = (conf->max_concurrent_streams_uni
+                      + conf->max_concurrent_streams_bidi)
+                     * conf->stream_buffer_size / 2000;
+
     if (!qc->client) {
         if (pkt->validated && pkt->retried) {
             qc->tp.retry_scid.len = pkt->dcid.len;
@@ -698,7 +706,7 @@ ngx_quic_new_connection(ngx_connection_t *c, ngx_quic_conf_t *conf,
     }
 
     c->idle = 1;
-    ngx_reusable_connection(c, 1);
+    ngx_reusable_connection(c, !qc->client);
 
     ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
                    "quic connection created");
