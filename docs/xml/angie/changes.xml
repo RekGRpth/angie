@@ -35,9 +35,32 @@ HTTP/3 запросы могли зависать и завершаться по
 исправление портировано из nginx 1.29.0.
 </para>
 <para lang="en">
-</para>
 HTTP/3 requests might stall and timeout.
 the fix was ported from nginx 1.29.0.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+в stream-модуле не останавливался отсчет времени неработоспособности, когда
+проксируемый сервер возвращался в работоспособное состояние по факту успешной
+установки соединения.
+</para>
+<para lang="en">
+the upstream's down time counting is not stopped when server recovers while
+succesfully connection.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+возможность задать в директиве "acme_dns_port" не только номер порта, но
+и IP-адрес; поддерживаются IPv4 и IPv6.
+</para>
+<para lang="en">
+support for IP addresses along with port numbers in the "acme_dns_port"
+directive; both IPv4 and IPv6 are allowed.
+</para>
 </change>
 
 </changes>

@@ -201,7 +201,7 @@ struct ngx_http_acme_main_conf_s {
     ngx_str_t                   acme_server_var;
     ngx_uint_t                  handle_challenge;
     ngx_connection_handler_pt   default_dns_handler;
-    ngx_int_t                   dns_port;
+    ngx_addr_t                 *dns_port;
 };
 
 
@@ -403,6 +403,8 @@ static char *ngx_http_acme(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_acme_hook(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_acme_add_proxy_pass(ngx_conf_t *cf,
     ngx_http_acme_main_conf_t *amcf);
+static char *ngx_http_acme_dns_port(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
 static ngx_int_t ngx_http_acme_add_listen(ngx_http_acme_main_conf_t *amcf);
 static ngx_int_t ngx_http_acme_create_conf_ctx(ngx_conf_t *cf,
     ngx_http_acme_main_conf_t *amcf);
@@ -419,6 +421,8 @@ static ngx_int_t ngx_http_acme_server_variable(ngx_http_request_t *r,
 static ngx_int_t ngx_http_acme_hook_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data);
 static ngx_acme_client_t *ngx_acme_client_add(ngx_conf_t *cf, ngx_str_t *name);
+static ngx_int_t ngx_acme_add_domain(ngx_acme_client_t *cli,
+    ngx_str_t *domain);
 static ngx_int_t ngx_http_acme_add_client_var(ngx_conf_t *cf,
     ngx_acme_client_t *cli, ngx_http_variable_t *var);
 static ngx_data_item_t *ngx_data_object_find(ngx_data_item_t *obj,
@@ -440,6 +444,9 @@ static ngx_uint_t ngx_dec_count(ngx_int_t i);
 static int ngx_clone_table_elt(ngx_pool_t *pool, ngx_str_t *dst,
     ngx_table_elt_t *src);
 
+static ngx_int_t ngx_acme_add_server_names(ngx_conf_t *cf,
+    ngx_acme_client_t *cli, ngx_array_t *server_names, u_char *cf_file_name,
+    ngx_uint_t cf_line);
 
 static const ngx_str_t ngx_acme_challenge_names[] = {
     ngx_string("http"),
@@ -450,11 +457,6 @@ static const ngx_str_t ngx_acme_challenge_names[] = {
 static const ngx_str_t ngx_acme_hook_names[] = {
     ngx_string("add"),
     ngx_string("remove"),
-};
-
-
-static ngx_conf_num_bounds_t ngx_http_acme_port_range = {
-    ngx_conf_check_num_bounds, 1, 65535
 };
 
 
@@ -490,10 +492,10 @@ static ngx_command_t  ngx_http_acme_commands[] = {
 
     { ngx_string("acme_dns_port"),
       NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
-      ngx_conf_set_num_slot,
+      ngx_http_acme_dns_port,
       NGX_HTTP_MAIN_CONF_OFFSET,
-      offsetof(ngx_http_acme_main_conf_t, dns_port),
-      &ngx_http_acme_port_range },
+      0,
+      NULL },
 
       ngx_null_command
 };
@@ -4253,15 +4255,14 @@ static ngx_int_t
 ngx_http_acme_postconfiguration(ngx_conf_t *cf)
 {
     size_t                       shm_size, sz;
-    ngx_str_t                   *s, name;
+    ngx_str_t                    name;
     ngx_err_t                    err;
-    ngx_uint_t                   i, j, n, valid_domains;
+    ngx_uint_t                   i, j, n;
     ngx_acme_client_t           *cli, **cli_p;
     ngx_pool_cleanup_t          *cln;
     ngx_http_handler_pt         *h;
     ngx_http_variable_t         *v;
     ngx_http_conf_port_t        *port;
-    ngx_http_server_name_t      *sn;
     ngx_http_acme_srv_conf_t    *ascf;
     ngx_http_core_srv_conf_t   **cscfp, *cscf;
     ngx_http_core_loc_conf_t    *clcf, *pclcf;
@@ -4303,64 +4304,10 @@ ngx_http_acme_postconfiguration(ngx_conf_t *cf)
                 return NGX_ERROR;
             }
 
-            valid_domains = 0;
-            sn = cscf->server_names.elts;
-
-            for (n = 0; n < cscf->server_names.nelts; n++) {
-                name = sn[n].name;
-
-                if (!name.len) {
-                    /* may contain an empty server_name */
-                    continue;
-                }
-
-                if (ngx_http_acme_check_server_name(&sn[n],
-                                             cli->challenge != NGX_AC_HTTP_01))
-                {
-                    ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
-                                       "unsupported domain format \"%V\" used "
-                                       "by ACME client \"%V\", ignored", &name,
-                                       &cli->name);
-                    continue;
-                }
-
-                valid_domains++;
-
-                s = ngx_array_push(cli->domains);
-                if (s == NULL) {
-                    return NGX_ERROR;
-                }
-
-                if (name.data[0] != '.') {
-                    *s = name;
-                    continue;
-                }
-
-                s->data = name.data + 1;
-                s->len = name.len - 1;
-
-                s = ngx_array_push(cli->domains);
-                if (s == NULL) {
-                    return NGX_ERROR;
-                }
-
-                s->data = ngx_pnalloc(cf->pool, name.len + 1);
-                if (s->data == NULL) {
-                    return NGX_ERROR;
-                }
-
-                s->data[0] = '*';
-                ngx_memcpy(s->data + 1, name.data, name.len);
-                s->len = name.len + 1;
-            }
-
-            if (valid_domains == 0) {
-                cf->conf_file->line = cli->cf_line;
-                cf->conf_file->file.name = cli->cf_filename;
-                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                                   "no valid domain name defined in server "
-                                   "block at %s:%ui for ACME client \"%V\"",
-                                   cscf->file_name, cscf->line, &cli->name);
+            if (ngx_acme_add_server_names(cf, cli, &cscf->server_names,
+                                          cscf->file_name, cscf->line)
+                != NGX_OK)
+            {
                 return NGX_ERROR;
             }
         }
@@ -5316,7 +5263,6 @@ ngx_http_acme_create_main_conf(ngx_conf_t *cf)
 
     ngx_memcpy(&amcf->log, cf->log, sizeof(ngx_log_t));
     amcf->max_key_auth_size = NGX_CONF_UNSET_SIZE;
-    amcf->dns_port = NGX_CONF_UNSET;
 
     return amcf;
 }
@@ -5336,7 +5282,6 @@ ngx_http_acme_init_main_conf(ngx_conf_t *cf, void *conf)
     }
 
     ngx_conf_init_size_value(amcf->max_key_auth_size, 2 * 1024);
-    ngx_conf_init_value(amcf->dns_port, 53);
 
     return NGX_CONF_OK;
 }
@@ -5911,25 +5856,27 @@ ngx_http_acme_add_proxy_pass(ngx_conf_t *cf, ngx_http_acme_main_conf_t *amcf)
 static ngx_int_t
 ngx_http_acme_add_listen(ngx_http_acme_main_conf_t *amcf)
 {
-    ngx_uint_t           i;
-    ngx_cycle_t         *cycle;
-    ngx_listening_t     *ls;
-    struct sockaddr_in   sa;
+    ngx_uint_t        i;
+    ngx_addr_t       *addr, tmp;
+    ngx_cycle_t      *cycle;
+    ngx_listening_t  *ls;
 
     cycle = amcf->cf->cycle;
 
-    ngx_memzero(&sa, sizeof(sa));
+    if (amcf->dns_port != NULL) {
+        addr = amcf->dns_port;
 
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(amcf->dns_port);
-    sa.sin_addr.s_addr = INADDR_ANY;
+    } else {
+        addr = &tmp;
+        ngx_parse_addr_port(cycle->pool, addr, (u_char *) "0.0.0.0:53", 10);
+    }
 
     ls = cycle->listening.elts;
     for (i = 0; i < cycle->listening.nelts; i++) {
 
         if (ls[i].type == SOCK_DGRAM
             && ngx_cmp_sockaddr(ls[i].sockaddr, ls[i].socklen,
-                               (struct sockaddr *) &sa, sizeof(sa), 1)
+                                addr->sockaddr, addr->socklen, 1)
             == NGX_OK)
         {
             amcf->default_dns_handler = ls[i].handler;
@@ -5939,13 +5886,13 @@ ngx_http_acme_add_listen(ngx_http_acme_main_conf_t *amcf)
         }
     }
 
-    if (amcf->dns_port <= 1024 && geteuid() != 0) {
+    if (ngx_inet_get_port(addr->sockaddr) <= 1024 && geteuid() != 0) {
         ngx_conf_log_error(NGX_LOG_WARN, amcf->cf, 0,
                            "this configuration requires super-user privileges "
                            "to handle ACME DNS challenge");
     }
 
-    ls = ngx_create_listening(amcf->cf, (struct sockaddr*) &sa, sizeof(sa));
+    ls = ngx_create_listening(amcf->cf, addr->sockaddr, addr->socklen);
     if (ls == NULL) {
         return NGX_ERROR;
     }
@@ -6229,6 +6176,51 @@ ngx_acme_client_add(ngx_conf_t *cf, ngx_str_t *name)
 }
 
 
+static char *
+ngx_http_acme_dns_port(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_acme_main_conf_t *amcf = conf;
+
+    u_char     buf[NGX_INT_T_LEN + 8];
+    ngx_str_t  value;
+    ngx_int_t  rc;
+
+    if (amcf->dns_port != NULL) {
+        return "is duplicate";
+    }
+
+    amcf->dns_port = ngx_pcalloc(cf->pool, sizeof(ngx_addr_t));
+    if (amcf->dns_port == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    value = ((ngx_str_t *) cf->args->elts)[1];
+
+    if (ngx_atoi(value.data, value.len) != NGX_ERROR) {
+        value.len = ngx_snprintf(buf, sizeof(buf), "0.0.0.0:%V", &value) - buf;
+        value.data = buf;
+    }
+
+    rc = ngx_parse_addr_port(cf->pool, amcf->dns_port, value.data, value.len);
+    if (rc == NGX_ERROR) {
+        return NGX_CONF_ERROR;
+    }
+
+    if (rc != NGX_OK) {
+        ngx_conf_log_error(NGX_LOG_ERR, cf, 0,
+                           "invalid acme_dns_port value \"%V\"",
+                           &((ngx_str_t *) cf->args->elts)[1]);
+        return NGX_CONF_ERROR;
+    }
+
+    if (ngx_inet_get_port(amcf->dns_port->sockaddr) == 0) {
+        ngx_inet_set_port(amcf->dns_port->sockaddr, 53);
+    }
+
+    return NGX_CONF_OK;
+}
+
+
 static ngx_int_t
 ngx_http_acme_add_client_var(ngx_conf_t *cf, ngx_acme_client_t *cli,
     ngx_http_variable_t *var)
@@ -6336,3 +6328,146 @@ ngx_clone_table_elt(ngx_pool_t *pool, ngx_str_t *dst,
     return NGX_OK;
 }
 
+
+static ngx_int_t
+ngx_acme_add_server_names(ngx_conf_t *cf, ngx_acme_client_t *cli,
+    ngx_array_t *server_names, u_char *cf_file_name, ngx_uint_t cf_line)
+{
+    ngx_str_t                s, name;
+    ngx_uint_t               n, valid_domains;
+    ngx_http_server_name_t  *sn;
+
+    sn = server_names->elts;
+    valid_domains = 0;
+
+    for (n = 0; n < server_names->nelts; n++) {
+        name = sn[n].name;
+
+        if (!name.len) {
+            /* may contain an empty server_name */
+            continue;
+        }
+
+        if (ngx_http_acme_check_server_name(&sn[n],
+                                            cli->challenge != NGX_AC_HTTP_01))
+        {
+            ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+                               "unsupported domain format \"%V\" used "
+                               "by ACME client \"%V\", ignored", &name,
+                               &cli->name);
+            continue;
+        }
+
+        valid_domains++;
+
+        if (name.data[0] != '.') {
+            if (ngx_acme_add_domain(cli, &name) != NGX_OK) {
+                return NGX_ERROR;
+            }
+
+            continue;
+        }
+
+        s.data = ngx_pnalloc(cf->pool, name.len + 1);
+        if (s.data == NULL) {
+            return NGX_ERROR;
+        }
+
+        s.data[0] = '*';
+        ngx_memcpy(s.data + 1, name.data, name.len);
+        s.len = name.len + 1;
+
+        if (ngx_acme_add_domain(cli, &s) != NGX_OK) {
+            return NGX_ERROR;
+        }
+
+        name.data++;
+        name.len--;
+
+        if (ngx_acme_add_domain(cli, &name) != NGX_OK) {
+            return NGX_ERROR;
+        }
+    }
+
+    if (valid_domains == 0) {
+        cf->conf_file->line = cli->cf_line;
+        cf->conf_file->file.name = cli->cf_filename;
+
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "no valid domain name defined in server "
+                           "block at %s:%ui for ACME client \"%V\"",
+                           cf_file_name, cf_line, &cli->name);
+
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_acme_add_domain(ngx_acme_client_t *cli, ngx_str_t *domain) {
+    ngx_str_t   *s;
+    ngx_int_t    i;
+    ngx_uint_t   wclen;
+
+    for (i = cli->domains->nelts - 1; i >= 0; i--) {
+        s = &((ngx_str_t *) cli->domains->elts)[i];
+
+        if (s->len == domain->len
+            && ngx_strncasecmp(s->data, domain->data, s->len) == 0)
+        {
+            /* Duplicate domain, ignore. */
+            return NGX_OK;
+        }
+
+        if ((s->data[0] == '*') == (domain->data[0] == '*')) {
+            /* Non-matching domain, continue searching. */
+            continue;
+        }
+
+        if (s->data[0] == '*') {
+            wclen = s->len - 1;
+
+            if (domain->len > wclen
+                && ngx_strncasecmp(domain->data + domain->len - wclen,
+                                   s->data + 1, wclen) == 0)
+            {
+                /*
+                 * We are adding a non-wildcard domain that matches a wildcard
+                 * domain in the list, ignore it.
+                 */
+                return NGX_OK;
+            }
+
+        } else {
+            wclen = domain->len - 1;
+
+            if (s->len > wclen
+                && ngx_strncasecmp(s->data + s->len - wclen,
+                                   domain->data + 1, wclen) == 0)
+            {
+                /*
+                 * We are adding a wildcard domain that matches a non-wildcard
+                 * domain in the list, remove the non-wildcard domain from the
+                 * list. We need to remove all the matching non-wildcard
+                 * domains from the list and replace them with the wildcard
+                 * domain.
+                 */
+                ngx_memmove(s, &s[1],
+                            (cli->domains->nelts - 1 - i) * sizeof(ngx_str_t));
+
+                cli->domains->nelts--;
+            }
+        }
+    }
+
+    s = ngx_array_push(cli->domains);
+    if (s == NULL) {
+        return NGX_ERROR;
+    }
+
+    *s = *domain;
+
+    return NGX_OK;
+}
