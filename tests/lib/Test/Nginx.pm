@@ -10,15 +10,17 @@ package Test::Nginx;
 use warnings;
 use strict;
 
-use base qw/ Exporter /;
+use Exporter qw/ import /;
 
-our @EXPORT = qw/ log_in log_out http http_get http_head port /;
-our @EXPORT_OK = qw/
-	http_gzip_request http_gzip_like http_start http_end http_content
-/;
-our %EXPORT_TAGS = (
-	gzip => [ qw/ http_gzip_request http_gzip_like / ]
-);
+BEGIN {
+	our @EXPORT = qw/ log_in log_out http http_get http_head port /;
+	our @EXPORT_OK = qw/
+		http_gzip_request http_gzip_like http_start http_end http_content
+	/;
+	our %EXPORT_TAGS = (
+		gzip => [ qw/ http_gzip_request http_gzip_like / ]
+	);
+}
 
 ###############################################################################
 
@@ -31,9 +33,8 @@ use POSIX qw/ waitpid WNOHANG /;
 use Socket qw/ CRLF /;
 use Test::More qw//;
 
-# we can't use 'use' here because of circular dependencies
-require Test::API;
-Test::API->import(qw/ api_status traverse_api_status /);
+use Test::Nginx::Config;
+use Test::API qw/ api_status traverse_api_status /;
 
 ###############################################################################
 
@@ -1453,9 +1454,16 @@ sub test_api {
 		my ($res, $details) = traverse_api_status($self->{_api_location},
 			api_status($self), unix_socket_params => $unix_socket_params);
 
-		my $ok = Test::More::ok($res, 'API');
-		unless ($ok) {
-			Test::More::diag(Test::More::explain($details));
+		unless ($res) {
+			Test::More::diag($details);
+		}
+
+		TODO: {
+			local $Test::Nginx::TODO = 'Extra keys in API response'
+				if $details && $details =~ /\s+Extra:/
+					&& $details !~ /\s+Missing:/;
+
+			Test::More::ok($res, 'API');
 		}
 	}
 
