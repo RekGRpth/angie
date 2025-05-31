@@ -12,11 +12,13 @@ use strict;
 use Exporter qw/import/;
 BEGIN {
 	our @EXPORT_OK = qw/ get_json put_json delete_json patch_json annotate
-		getconn hash_like stream_daemon trim /;
+		getconn hash_like stream_daemon trim log2i log2o log2c
+		$TIME_RE $NUM_RE /;
 
 	our %EXPORT_TAGS = (
 		json => [ qw/ get_json put_json delete_json patch_json / ],
 		log  => [ qw/ log2i log2o log2c / ],
+		re   => [ qw/ $TIME_RE $NUM_RE / ],
 	);
 }
 
@@ -24,11 +26,15 @@ use IO::Select;
 use IO::Socket qw/ SHUT_WR TCP_MAXSEG TCP_NODELAY IPPROTO_TCP /;
 use List::Util qw/ sum0 /;
 use Test::More;
+use Test::Deep qw/ re /;
 
 use Test::Nginx qw/ http http_get log_in log_out port /;
 
 eval { require JSON; };
 plan(skip_all => "JSON is not installed") if $@;
+
+our $TIME_RE = re(qr/^\d{4}\-\d{2}\-\d{2}T\d{2}\:\d{2}\:\d{2}(\.\d{3})?Z$/);
+our $NUM_RE  = re(qr/^\d+$/);
 
 sub _parse_response {
 	my $response = shift;
@@ -251,7 +257,7 @@ sub stream_daemon {
 
 		my $input = socket_read($client,
 			trailing_char => $params->{trailing_char} // '$');
-		log2i("|| << $client_port $input");
+		log2i("$client_port $input");
 
 		my $output = $client->sockport();
 		my $output_length = length $output;
@@ -268,7 +274,7 @@ sub stream_daemon {
 				$output .= '.' x ($response_length - length $output);
 			}
 		}
-		log2o("|| >> $client_port $output");
+		log2o("$client_port $output");
 
 		socket_write($client, $output);
 
