@@ -9,7 +9,7 @@
 #include <math.h>
 
 
-#define NGX_JSON_MAX_NUMBER_LEN  16
+#define NGX_JSON_MAX_NUMBER_LEN  NGX_INT64_LEN
 
 
 typedef struct {
@@ -58,8 +58,8 @@ static void *ngx_json_parse_error(ngx_json_parse_error_t *error, u_char *pos,
 
 
 ngx_data_item_t *
-ngx_json_parse(u_char *start, u_char *end, ngx_pool_t *pool,
-    ngx_json_parse_error_t *error)
+ngx_json_parse_first_object(u_char *start, u_char *end, u_char **last,
+    ngx_pool_t *pool, ngx_json_parse_error_t *error)
 {
     u_char           *p;
     ngx_data_item_t  *item;
@@ -82,8 +82,23 @@ ngx_json_parse(u_char *start, u_char *end, ngx_pool_t *pool,
 
     p = ngx_json_skip_space(p, end);
 
-    if (p != end) {
-        return ngx_json_parse_error_const(error, p,
+    *last = p;
+
+    return item;
+}
+
+
+ngx_data_item_t *
+ngx_json_parse(u_char *start, u_char *end, ngx_pool_t *pool,
+    ngx_json_parse_error_t *error)
+{
+    u_char           *last;
+    ngx_data_item_t  *item;
+
+    item = ngx_json_parse_first_object(start, end, &last, pool, error);
+
+    if (last != end) {
+        return ngx_json_parse_error_const(error, last,
             "Unexpected character after the end of a valid JSON value."
         );
     }
