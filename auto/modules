@@ -422,6 +422,7 @@ if [ $HTTP = YES ]; then
     if [ $HTTP_DOCKER = YES ]; then
         USE_JSON=YES
         USE_DOCKER=YES
+        HTTP_CLIENT=YES
 
         ngx_module_name=ngx_http_docker_module
         ngx_module_incs=
@@ -429,23 +430,6 @@ if [ $HTTP = YES ]; then
         ngx_module_srcs=src/http/modules/ngx_http_docker_module.c
         ngx_module_libs=
         ngx_module_link=$HTTP_DOCKER
-
-        . auto/module
-    fi
-
-    if [ $HTTP_ACME = YES ]; then
-        USE_OPENSSL=YES
-        USE_JSON=YES
-        HTTP_SSL=YES
-
-        have=NGX_HTTP_ACME . auto/have
-
-        ngx_module_name=ngx_http_acme_module
-        ngx_module_incs=
-        ngx_module_deps=
-        ngx_module_srcs=src/http/modules/ngx_http_acme_module.c
-        ngx_module_libs=
-        ngx_module_link=$HTTP_ACME
 
         . auto/module
     fi
@@ -917,6 +901,24 @@ if [ $HTTP = YES ]; then
         . auto/module
     fi
 
+    if [ $HTTP_ACME = YES ]; then
+        USE_OPENSSL=YES
+        USE_JSON=YES
+        HTTP_SSL=YES
+        HTTP_CLIENT=YES
+
+        have=NGX_HTTP_ACME . auto/have
+
+        ngx_module_name=ngx_http_acme_module
+        ngx_module_incs=
+        ngx_module_deps=
+        ngx_module_srcs=src/http/modules/ngx_http_acme_module.c
+        ngx_module_libs=
+        ngx_module_link=$HTTP_ACME
+
+        . auto/module
+    fi
+
     if [ $HTTP_UPSTREAM_HASH = YES ]; then
         ngx_module_name=ngx_http_upstream_hash_module
         ngx_module_incs=
@@ -1008,6 +1010,21 @@ if [ $HTTP = YES ]; then
         ngx_module_srcs=src/http/modules/ngx_http_stub_status_module.c
         ngx_module_libs=
         ngx_module_link=$HTTP_STUB_STATUS
+
+        . auto/module
+    fi
+
+    if [ $HTTP_CLIENT = YES ]; then
+
+        have=NGX_HTTP_CLIENT . auto/have
+
+        ngx_module_type=HTTP_FILTER
+        ngx_module_name=ngx_http_client_module
+        ngx_module_incs=
+        ngx_module_deps=src/http/ngx_http_client.h
+        ngx_module_srcs=src/http/modules/ngx_http_client_module.c
+        ngx_module_libs=
+        ngx_module_link=YES
 
         . auto/module
     fi

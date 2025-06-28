@@ -750,9 +750,11 @@ ngx_http_create_request(ngx_connection_t *c)
     ctx->current_request = r;
 
 #if (NGX_STAT_STUB)
-    (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
-    r->stat_reading = 1;
-    (void) ngx_atomic_fetch_add(ngx_stat_requests, 1);
+    if (!c->stub) {
+        (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
+        r->stat_reading = 1;
+        (void) ngx_atomic_fetch_add(ngx_stat_requests, 1);
+    }
 #endif
 
     return r;
@@ -2762,7 +2764,6 @@ ngx_http_post_request(ngx_http_request_t *r, ngx_http_posted_request_t *pr)
 void
 ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
 {
-    ngx_uint_t                 internal;
     ngx_connection_t          *c;
     ngx_http_request_t        *pr;
     ngx_http_core_loc_conf_t  *clcf;
@@ -2772,17 +2773,6 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
     ngx_log_debug5(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "http finalize request: %i, \"%V?%V\" a:%d, c:%d",
                    rc, &r->uri, &r->args, r == c->data, r->main->count);
-
-    /* r->finalize_request could free the request object */
-    internal = r->internal_client;
-
-    if (r->finalize_request) {
-        r->finalize_request(r, rc);
-    }
-
-    if (internal) {
-        return;
-    }
 
     if (rc == NGX_DONE) {
         ngx_http_finalize_connection(r);
@@ -2817,9 +2807,10 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         return;
     }
 
-    if (rc >= NGX_HTTP_SPECIAL_RESPONSE
-        || rc == NGX_HTTP_CREATED
-        || rc == NGX_HTTP_NO_CONTENT)
+    if ((rc >= NGX_HTTP_SPECIAL_RESPONSE
+         || rc == NGX_HTTP_CREATED
+         || rc == NGX_HTTP_NO_CONTENT)
+        && !c->stub)
     {
         if (rc == NGX_HTTP_CLOSE) {
             c->timedout = 1;
@@ -3043,6 +3034,11 @@ ngx_http_finalize_connection(ngx_http_request_t *r)
         return;
     }
 #endif
+
+    if (r->connection->stub) {
+        ngx_http_close_request(r, 0);
+        return;
+    }
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
@@ -3982,6 +3978,10 @@ ngx_http_close_request(ngx_http_request_t *r, ngx_int_t rc)
     r->count--;
 
     if (r->count || r->blocked) {
+        if (c->stub) {
+            ngx_post_event(c->write, &ngx_posted_events);
+        }
+
         return;
     }
 
@@ -4140,7 +4140,9 @@ ngx_http_close_connection(ngx_connection_t *c)
 #endif
 
 #if (NGX_STAT_STUB)
-    (void) ngx_atomic_fetch_add(ngx_stat_active, -1);
+    if (!c->stub) {
+        (void) ngx_atomic_fetch_add(ngx_stat_active, -1);
+    }
 #endif
 
     c->destroyed = 1;
@@ -4749,3 +4751,78 @@ ngx_api_http_ssl_handler(ngx_api_entry_data_t data, ngx_api_ctx_t *actx,
 #endif
 
 #endif /* NGX_API */
+
+
+ngx_int_t
+ngx_http_request_add_header(ngx_http_request_t *r, u_char *name, size_t nlen,
+    u_char *value, size_t vlen)
+{
+    ngx_table_elt_t            *h;
+    ngx_http_header_t          *hh;
+    ngx_http_core_main_conf_t  *cmcf;
+
+    h = ngx_list_push(&r->headers_in.headers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+
+    h->key.data = name;
+    h->key.len = nlen;
+
+    h->value.data = value;
+    h->value.len = vlen;
+
+    h->lowcase_key = ngx_pnalloc(r->pool, h->key.len);
+    if (h->lowcase_key == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_strlow(h->lowcase_key, h->key.data, h->key.len);
+
+    h->hash = ngx_hash_key(h->lowcase_key, h->key.len);
+
+    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
+
+    hh = ngx_hash_find(&cmcf->headers_in_hash, h->hash,
+                       h->lowcase_key, h->key.len);
+
+    if (hh && hh->handler(r, h, hh->offset) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+
+ngx_int_t
+ngx_http_request_set_body(ngx_http_request_t *r, ngx_str_t *body)
+{
+    ngx_buf_t    *b;
+    ngx_chain_t  *cl;
+
+    r->request_body = ngx_pcalloc(r->pool,
+                                  sizeof(ngx_http_request_body_t));
+    if (r->request_body == NULL) {
+        return NGX_ERROR;
+    }
+
+    b = ngx_create_temp_buf(r->pool, body->len);
+    if (b == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_memcpy(b->start, body->data, body->len);
+    b->last = b->end;
+
+    cl = ngx_alloc_chain_link(r->pool);
+    if (cl == NULL) {
+        return NGX_ERROR;
+    }
+
+    cl->buf = b;
+    cl->next = NULL;
+
+    r->request_body->bufs = cl;
+
+    return NGX_OK;
+}
