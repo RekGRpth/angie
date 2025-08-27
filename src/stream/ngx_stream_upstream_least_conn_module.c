@@ -99,10 +99,9 @@ ngx_stream_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
 {
     ngx_stream_upstream_rr_peer_data_t *rrp = data;
 
-    uintptr_t                        m;
     ngx_int_t                        rc, total;
     ngx_int_t                        weight, best_weight, effective_weight;
-    ngx_uint_t                       i, n, p, many, factor;
+    ngx_uint_t                       i, p, many, factor;
     ngx_stream_upstream_rr_peer_t   *peer, *best;
     ngx_stream_upstream_rr_peers_t  *peers;
 
@@ -119,11 +118,9 @@ ngx_stream_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
 
     ngx_stream_upstream_rr_peers_wlock(peers);
 
-#if (NGX_STREAM_UPSTREAM_ZONE)
-    if (peers->generation && rrp->generation != *peers->generation) {
+    if (ngx_stream_upstream_conf_changed(peers, rrp)) {
         goto busy;
     }
-#endif
 
     best = NULL;
     total = 0;
@@ -138,24 +135,7 @@ ngx_stream_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
          peer;
          peer = peer->next, i++)
     {
-        n = i / (8 * sizeof(uintptr_t));
-        m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));
-
-        if (rrp->tried[n] & m) {
-            continue;
-        }
-
-        if (peer->down) {
-            continue;
-        }
-
-        if (ngx_stream_upstream_rr_is_failed(peer)
-            && !ngx_stream_upstream_rr_is_fail_expired(peer))
-        {
-            continue;
-        }
-
-        if (ngx_stream_upstream_rr_is_busy(peer)) {
+        if (!ngx_stream_upstream_rr_peer_ready(rrp, peer, i)) {
             continue;
         }
 
@@ -195,14 +175,7 @@ ngx_stream_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
              peer;
              peer = peer->next, i++)
         {
-            n = i / (8 * sizeof(uintptr_t));
-            m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));
-
-            if (rrp->tried[n] & m) {
-                continue;
-            }
-
-            if (peer->down) {
+            if (!ngx_stream_upstream_rr_peer_ready(rrp, peer, i)) {
                 continue;
             }
 
@@ -210,16 +183,6 @@ ngx_stream_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
             weight = peer->weight * factor;
 
             if (peer->conns * best_weight != best->conns * weight) {
-                continue;
-            }
-
-            if (ngx_stream_upstream_rr_is_failed(peer)
-                && !ngx_stream_upstream_rr_is_fail_expired(peer))
-            {
-                continue;
-            }
-
-            if (ngx_stream_upstream_rr_is_busy(peer)) {
                 continue;
             }
 
@@ -256,12 +219,7 @@ failed:
 
         rrp->peers = peers->next;
 
-        n = (rrp->peers->number + (8 * sizeof(uintptr_t) - 1))
-                / (8 * sizeof(uintptr_t));
-
-        for (i = 0; i < n; i++) {
-            rrp->tried[i] = 0;
-        }
+        ngx_stream_upstream_rr_reset_tried(rrp, rrp->peers->number);
 
         ngx_stream_upstream_rr_peers_unlock(peers);
 
@@ -273,16 +231,12 @@ failed:
 
         ngx_stream_upstream_rr_peers_wlock(peers);
 
-#if (NGX_STREAM_UPSTREAM_ZONE)
-        if (peers->generation && rrp->generation != *peers->generation) {
+        if (ngx_stream_upstream_conf_changed(peers, rrp)) {
             goto busy;
         }
-#endif
     }
 
-#if (NGX_STREAM_UPSTREAM_ZONE)
 busy:
-#endif
 
     ngx_stream_upstream_rr_peers_unlock(peers);
 

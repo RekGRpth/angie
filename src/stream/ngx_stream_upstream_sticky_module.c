@@ -109,8 +109,7 @@ ngx_stream_upstream_sticky_select_peer(ngx_stream_upstream_rr_peer_data_t *rrp,
     size_t       len;
     u_char      *sid, hashed[NGX_STREAM_UPSTREAM_SID_LEN];
     ngx_str_t   *hint;
-    uintptr_t    m;
-    ngx_uint_t   i, n;
+    ngx_uint_t   i;
 
     ngx_stream_session_t                   *s;
     ngx_stream_upstream_state_t            *us;
@@ -137,39 +136,18 @@ again:
 
     ngx_stream_upstream_rr_peers_rlock(peers);
 
-#if (NGX_STREAM_UPSTREAM_ZONE)
-    if (peers->generation && rrp->generation != *peers->generation) {
+    if (ngx_stream_upstream_conf_changed(peers, rrp)) {
         ngx_stream_upstream_rr_peers_unlock(peers);
         return NGX_BUSY;
     }
-#endif
 
     for (peer = peers->peer, i = 0;
          peer;
          peer = peer->next, i++)
     {
-        n = i / (8 * sizeof(uintptr_t));
-        m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));
-
-        if (rrp->tried[n] & m) {
-            continue;
-        }
-
         ngx_stream_upstream_rr_peer_lock(peers, peer);
 
-        if (peer->down) {
-            ngx_stream_upstream_rr_peer_unlock(peers, peer);
-            continue;
-        }
-
-        if (ngx_stream_upstream_rr_is_failed(peer)
-            && !ngx_stream_upstream_rr_is_fail_expired(peer))
-        {
-            ngx_stream_upstream_rr_peer_unlock(peers, peer);
-            continue;
-        }
-
-        if (ngx_stream_upstream_rr_is_busy(peer)) {
+        if (!ngx_stream_upstream_rr_peer_ready(rrp, peer, i)) {
             ngx_stream_upstream_rr_peer_unlock(peers, peer);
             continue;
         }
