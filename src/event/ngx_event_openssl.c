@@ -57,8 +57,6 @@ static ssize_t ngx_ssl_sendfile(ngx_connection_t *c, ngx_buf_t *file,
     size_t size);
 static void ngx_ssl_read_handler(ngx_event_t *rev);
 static void ngx_ssl_shutdown_handler(ngx_event_t *ev);
-static void ngx_ssl_connection_error(ngx_connection_t *c, int sslerr,
-    ngx_err_t err, char *text);
 static void ngx_ssl_clear_error(ngx_log_t *log);
 
 static ngx_int_t ngx_ssl_session_id_context(ngx_ssl_t *ssl,
@@ -1479,6 +1477,8 @@ ngx_ssl_passwords_cleanup(void *data)
 ngx_int_t
 ngx_ssl_dhparam(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_str_t *file)
 {
+#ifndef OPENSSL_NO_DH
+
     BIO  *bio;
 
     if (file->len == 0) {
@@ -1548,6 +1548,8 @@ ngx_ssl_dhparam(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_str_t *file)
 #endif
 
     BIO_free(bio);
+
+#endif
 
     return NGX_OK;
 }
@@ -3461,7 +3463,7 @@ ngx_ssl_shutdown_handler(ngx_event_t *ev)
 }
 
 
-static void
+void
 ngx_ssl_connection_error(ngx_connection_t *c, int sslerr, ngx_err_t err,
     char *text)
 {
