@@ -2,7 +2,7 @@
 
 # (C) 2025 Web Server LLC
 
-# Tests for "docker_max_object_size" directive.
+# Tests for containers count for the default buffer.
 
 ###############################################################################
 
@@ -15,6 +15,7 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
 use Test::Nginx;
+use Test::Utils qw/get_json/;
 
 ###############################################################################
 
@@ -45,73 +46,9 @@ system("$container_engine network inspect test_net 1>/dev/null 2>1") == 0
 
 my $t = Test::Nginx->new()
 	->has(qw/http http_api upstream_zone docker upstream_sticky proxy/)
-	->plan(3);
+	->plan(26);
 
-###############################################################################
-
-stop_containers();
-
-start_containers($t, 5);
-
-restart_with_size($t, '4k');
-check_log_error($t);
-
-restart_with_size($t, '7k');
-check_log_error($t);
-
-restart_with_size($t, '16k');
-check_log_ok($t);
-
-stop_containers();
-
-###############################################################################
-
-sub lines {
-	my ($t, $file, $pattern) = @_;
-
-	my $path = $t->testdir() . '/' . $file;
-	open my $fh, '<', $path or return "$!";
-	my $value = map { $_ =~ /\Q$pattern\E/ } (<$fh>);
-	close $fh;
-	return $value;
-}
-
-sub check_log_ok {
-	my ($t) = @_;
-
-	for (1 .. 50) {
-		last if lines($t, 'angie_docker.log', 'Docker peer');
-		select undef, undef, undef, 0.5;
-	}
-
-	is(lines($t, 'angie_docker.log', '[error]'), 0,
-		'good size of Docker object');
-}
-
-sub check_log_error {
-	my ($t) = @_;
-
-	my $found = 0;
-
-	for (1 .. 50) {
-		$found = lines($t, 'angie_docker.log', 'Docker sends too large');
-		last if $found;
-		select undef, undef, undef, 0.5;
-	}
-
-	ok($found, 'too large Docker object');
-}
-
-sub restart_with_size {
-	my ($t, $size) = @_;
-
-	my $tdir = $t->testdir();
-
-	$t->stop();
-
-	unlink("$tdir/angie_docker.log");
-
-	$t->write_file_expand('nginx.conf', <<"EOF");
+$t->write_file_expand('nginx.conf', <<"EOF");
 
 %%TEST_GLOBALS%%
 
@@ -126,7 +63,6 @@ http {
     %%TEST_GLOBALS_HTTP%%
 
     docker_endpoint unix:$endpoint;
-    docker_max_object_size $size;
 
     upstream u {
         zone z 1m;
@@ -136,6 +72,10 @@ http {
         listen %%PORT_8080%%;
         server_name localhost;
 
+        location /api/ {
+            api /;
+        }
+
         location /pass {
             proxy_pass http://u;
         }
@@ -144,7 +84,84 @@ http {
 
 EOF
 
-	$t->run();
+###############################################################################
+
+stop_containers();
+
+start_containers($t, 25);
+
+$t->run();
+
+check_peers($t);
+check_log($t);
+
+stop_containers();
+
+###############################################################################
+
+sub get_containers_ip {
+	my ($t) = @_;
+
+	my $tdir = $t->testdir();
+	my $ip_file = 'containers_ip.txt';
+
+	system(
+		"$container_engine ps --format \"{{.ID}}\" | while read -r line ; do "
+			. "echo \$($container_engine inspect --format "
+			. '"{{ .NetworkSettings.Networks.test_net.IPAddress }}" $line)'
+			. ">> $tdir/$ip_file; "
+		. 'done') == 0
+		or die "cannot get container's IP";
+
+	my $data = $t->read_file($ip_file);
+
+	unlink("$tdir/$ip_file");
+
+	return split("\n", $data);
+}
+
+sub check_peers {
+	my ($t) = @_;
+
+	my @ips = get_containers_ip($t);
+
+	my $j = get_json("/api/status/http/upstreams/u/");
+
+	for my $ip (@ips) {
+		my $peer = "$ip:80";
+
+		if (!(exists $j->{peers}{$peer})) {
+			for (1 .. 50) {
+				$j = get_json("/api/status/http/upstreams/u/");
+				last if exists $j->{peers}{$peer};
+				select undef, undef, undef, 0.01;
+			}
+		}
+
+		is($j->{peers}{$peer}{server}, $peer, "create peer '$peer'");
+	}
+}
+
+sub lines {
+	my ($t, $file, $pattern) = @_;
+
+	my $path = $t->testdir() . '/' . $file;
+	open my $fh, '<', $path or return "$!";
+	my $value = map { $_ =~ /\Q$pattern\E/ } (<$fh>);
+	close $fh;
+	return $value;
+}
+
+sub check_log {
+	my ($t) = @_;
+
+	for (1 .. 50) {
+		last if lines($t, 'angie_docker.log', 'Docker sends too large');
+		select undef, undef, undef, 0.01;
+	}
+
+	is(lines($t, 'angie_docker.log', '[error]'), 0,
+		'good buffer size for containers');
 }
 
 sub start_containers {
