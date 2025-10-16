@@ -745,6 +745,11 @@ ngx_quic_handshake(ngx_connection_t *c, ngx_uint_t level)
         }
     }
 
+    if (qc->error) {
+        ngx_connection_error(c, 0, "SSL_do_handshake() failed");
+        return NGX_ERROR;
+    }
+
     if (!SSL_is_init_finished(ssl_conn)) {
         if (ngx_quic_keys_available(qc->keys, NGX_QUIC_ENCRYPTION_EARLY_DATA, 0)
             && qc->client_tp_done)
@@ -1044,7 +1049,7 @@ ngx_quic_init_connection(ngx_connection_t *c)
     }
 #endif
 
-#if defined(OPENSSL_IS_BORINGSSL) || defined(OPENSSL_IS_AWSLC)
+#if (defined OPENSSL_IS_BORINGSSL || defined OPENSSL_IS_AWSLC)
     if (SSL_set_quic_early_data_context(ssl_conn, p, clen) == 0) {
         ngx_log_error(NGX_LOG_ALERT, c->log, 0,
                       "quic SSL_set_quic_early_data_context() failed");

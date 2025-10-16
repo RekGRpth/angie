@@ -144,10 +144,10 @@ directive.
 
 <change type="feature">
 <para lang="ru">
-вся функциональность nginx 1.29.1.
+вся функциональность nginx 1.29.2.
 </para>
 <para lang="en">
-all functionality of nginx 1.29.1.
+all functionality of nginx 1.29.2.
 </para>
 </change>
 
@@ -161,6 +161,20 @@ all functionality of nginx 1.29.1.
 removed the need to define a separate "server" block with a "listen 80"
 directive for ACME HTTP challenges; the listening port can be customized
 using the new "acme_http_port" directive if necessary.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+добавлена поддержка Encrypted Client Hello (ECH) в HTTP и Stream SSL-модулях.
+Новая директивой "ssl_encrypted_hello_key" позволяет задать файл с приватным
+ключом.  Переменная "$ssl_encrypted_hello" содержит информацию об использовании
+ECH.
+</para>
+<para lang="en">
+added support for Encrypted Client Hello (ECH) in HTTP and Stream SSL modules.
+The new "ssl_encrypted_hello_key" directive specifies the file with private
+key.  The "$ssl_encrypted_hello" variable contains information about ECH usage.
 </para>
 </change>
 

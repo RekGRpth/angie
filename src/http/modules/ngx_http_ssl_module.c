@@ -315,6 +315,13 @@ static ngx_command_t  ngx_http_ssl_commands[] = {
       offsetof(ngx_http_ssl_srv_conf_t, early_data),
       NULL },
 
+    { ngx_string("ssl_encrypted_hello_key"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_array_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_ssl_srv_conf_t, encrypted_hello_keys),
+      NULL },
+
     { ngx_string("ssl_conf_command"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE2,
       ngx_conf_set_keyval_slot,
@@ -399,6 +406,9 @@ static ngx_http_variable_t  ngx_http_ssl_vars[] = {
     { ngx_string("ssl_early_data"), NULL, ngx_http_ssl_variable,
       (uintptr_t) ngx_ssl_get_early_data,
       NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE, 0 },
+
+    { ngx_string("ssl_encrypted_hello"), NULL, ngx_http_ssl_variable,
+      (uintptr_t) ngx_ssl_get_encrypted_hello, NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_server_name"), NULL, ngx_http_ssl_variable,
       (uintptr_t) ngx_ssl_get_server_name, NGX_HTTP_VAR_CHANGEABLE, 0 },
@@ -682,6 +692,7 @@ ngx_http_ssl_create_srv_conf(ngx_conf_t *cf)
     sscf->ocsp_cache_zone = NGX_CONF_UNSET_PTR;
     sscf->stapling = NGX_CONF_UNSET;
     sscf->stapling_verify = NGX_CONF_UNSET;
+    sscf->encrypted_hello_keys = NGX_CONF_UNSET_PTR;
 #if (NGX_HAVE_NTLS)
     sscf->ntls = NGX_CONF_UNSET;
 #endif
@@ -791,6 +802,10 @@ ngx_http_ssl_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     cln->data = &conf->ssl;
 
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
+    {
+    static ngx_ssl_client_hello_arg cb = { ngx_http_ssl_servername };
+
+    ngx_ssl_set_client_hello_callback(conf->ssl.ctx, &cb);
 
     if (SSL_CTX_set_tlsext_servername_callback(conf->ssl.ctx,
                                                ngx_http_ssl_servername)
@@ -801,7 +816,7 @@ ngx_http_ssl_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
             "dynamically to an OpenSSL library which has no tlsext support, "
             "therefore SNI is not available");
     }
-
+    }
 #endif
 
 #ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
@@ -958,6 +973,16 @@ ngx_http_ssl_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     }
 
     if (ngx_ssl_early_data(cf, &conf->ssl, conf->early_data) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    ngx_conf_merge_ptr_value(conf->encrypted_hello_keys,
+                         prev->encrypted_hello_keys, NULL);
+
+    if (ngx_ssl_encrypted_hello_keys(cf, &conf->ssl,
+                                     conf->encrypted_hello_keys)
+        != NGX_OK)
+    {
         return NGX_CONF_ERROR;
     }
 
