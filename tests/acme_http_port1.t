@@ -19,7 +19,7 @@ use Test::More;
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
-use Test::Nginx qw/ :DEFAULT http_content/;
+use Test::Nginx qw/ :DEFAULT http_content /;
 use Test::Nginx::ACME;
 
 ###############################################################################
@@ -27,7 +27,7 @@ use Test::Nginx::ACME;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/acme socket_ssl/);
+my $t = Test::Nginx->new()->has(qw/acme http_ssl socket_ssl/);
 
 # XXX
 # We don't use the port function here, because the port it creates is currently
@@ -81,7 +81,6 @@ http {
         listen 127.0.0.1:$http_port;
         return 200 '\$request_uri';
     }
-
 }
 
 EOF
@@ -127,7 +126,7 @@ for (;;) {
 		# specified in a server block.
 
 		my $s = http_content(
-			http_get("/$count", PeerAddr => '127.0.0.1:' . port($http_port)));
+			http_get("/$count", PeerAddr => '127.0.0.1:' . $http_port));
 
 		$expected = ($s eq "/$count");
 
@@ -139,9 +138,9 @@ for (;;) {
 		# an address matching the pattern specified in the acme_http_port
 		# directive.
 
-		my $s = http_get('/xxx', PeerAddr => '127.0.0.2:' . port($http_port)) // '';
+		my $s = http_get('/xxx', PeerAddr => '127.0.0.2:' . $http_port) // '';
 
-		$unexpected = ($s eq ''	);
+		$unexpected = ($s eq '');
 	}
 
 	last if $obtained || (time() - $loop_start > 30);
