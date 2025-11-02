@@ -7,35 +7,38 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <ngx_md5.h>
+#include <ngx_sticky.h>
 
 
 typedef struct {
-    ngx_str_t                        cookie;
-    ngx_array_t                      cookie_attrs;
-    ngx_array_t                      lookup_vars;
-    ngx_http_complex_value_t        *secret;
-    ngx_flag_t                       strict;
+    ngx_str_t                                  cookie;
+    ngx_array_t                                cookie_attrs;
+    ngx_array_t                                lookup_vars;
+    ngx_http_complex_value_t                  *secret;
+    ngx_flag_t                                 strict;
 
-    ngx_http_upstream_init_pt        original_init_upstream;
-    ngx_http_upstream_init_peer_pt   original_init_peer;
+    ngx_http_upstream_init_pt                  original_init_upstream;
+    ngx_http_upstream_init_peer_pt             original_init_peer;
 
 } ngx_http_upstream_sticky_srv_conf_t;
 
 
 typedef struct {
-    ngx_str_t                        hint;
-    ngx_str_t                        salt;
-    ngx_table_elt_t                 *set_cookie;
+    ngx_http_upstream_sticky_srv_conf_t       *conf;
 
-    ngx_event_get_peer_pt            original_get_peer;
+    ngx_str_t                                  hint;
+    ngx_str_t                                  salt;
+
+    ngx_table_elt_t                           *set_cookie;
+
+    ngx_event_get_peer_pt                      original_get_peer;
 } ngx_http_upstream_sticky_peer_data_t;
+
 
 static ngx_int_t ngx_http_upstream_sticky_select_peer(
     ngx_http_upstream_rr_peer_data_t *rrp,
-    ngx_http_upstream_sticky_peer_data_t *sp, ngx_peer_connection_t *pc);
-static size_t ngx_http_upstream_sticky_hash(ngx_str_t *in, ngx_str_t *salt,
-    u_char *out);
+    ngx_http_upstream_sticky_peer_data_t *sp, ngx_peer_connection_t *pc,
+    ngx_str_t *hint);
 static ngx_int_t ngx_http_upstream_init_sticky(ngx_conf_t *cf,
     ngx_http_upstream_srv_conf_t *us);
 static ngx_int_t ngx_http_upstream_init_sticky_peer(ngx_http_request_t *r,
@@ -116,31 +119,22 @@ ngx_module_t  ngx_http_upstream_sticky_module = {
 
 static ngx_int_t
 ngx_http_upstream_sticky_select_peer(ngx_http_upstream_rr_peer_data_t *rrp,
-    ngx_http_upstream_sticky_peer_data_t *sp, ngx_peer_connection_t *pc)
+    ngx_http_upstream_sticky_peer_data_t *sp, ngx_peer_connection_t *pc,
+    ngx_str_t *hint)
 {
-    size_t       len;
-    u_char      *sid, hashed[NGX_HTTP_UPSTREAM_SID_LEN];
-    ngx_str_t   *hint;
-    ngx_uint_t   i;
+    size_t                         len;
+    u_char                        *sid;
+    ngx_uint_t                     i;
+    ngx_http_request_t            *r;
+    ngx_http_upstream_state_t     *us;
+    ngx_http_upstream_rr_peer_t   *peer;
+    ngx_http_upstream_rr_peers_t  *peers;
 
-    ngx_http_request_t                   *r;
-    ngx_http_upstream_state_t            *us;
-    ngx_http_upstream_rr_peer_t          *peer;
-    ngx_http_upstream_rr_peers_t         *peers;
-    ngx_http_upstream_sticky_srv_conf_t  *scf;
+    u_char                         buf[NGX_STICKY_SID_LEN];
 
     r = pc->ctx;
 
-    hint = &sp->hint;
     us = r->upstream->state;
-
-    if (hint->len == 0) {
-        us->sticky_status = NGX_HTTP_UPSTREAM_STICKY_STATUS_NEW;
-
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
-                       "sticky: no hint provided");
-        return NGX_DECLINED;
-    }
 
     peers = rrp->peers;
 
@@ -165,8 +159,8 @@ again:
         }
 
         if (sp->salt.len) {
-            len = ngx_http_upstream_sticky_hash(&peer->sid, &sp->salt, hashed);
-            sid = hashed;
+            len = ngx_sticky_hash(&peer->sid, &sp->salt, buf);
+            sid = buf;
 
         } else {
             len = peer->sid.len;
@@ -197,41 +191,28 @@ again:
         goto again;
     }
 
-    us->sticky_status = NGX_HTTP_UPSTREAM_STICKY_STATUS_MISS;
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0, "sticky: no match");
-
     ngx_http_upstream_rr_peers_unlock(peers);
 
-    scf = ngx_http_conf_upstream_srv_conf(r->upstream->upstream,
-                                          ngx_http_upstream_sticky_module);
+    us->sticky_status = NGX_HTTP_UPSTREAM_STICKY_STATUS_MISS;
 
-    return scf->strict ? NGX_BUSY : NGX_DECLINED;
-}
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                   "sticky: no match strict:%i", sp->conf->strict);
 
+    if (sp->conf->strict) {
+        pc->name = peers->name;
+        return NGX_BUSY;
+    }
 
-static size_t
-ngx_http_upstream_sticky_hash(ngx_str_t *in, ngx_str_t *salt, u_char *out)
-{
-    ngx_md5_t  md5;
-    u_char     hash[16];
-
-    ngx_md5_init(&md5);
-    ngx_md5_update(&md5, in->data, in->len);
-    ngx_md5_update(&md5, salt->data, salt->len);
-    ngx_md5_final(hash, &md5);
-
-    ngx_hex_dump(out, hash, 16);
-
-    return 32;
+    return NGX_DECLINED;
 }
 
 
 static ngx_int_t
 ngx_http_upstream_init_sticky(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 {
-    ngx_int_t  *v;
-    ngx_str_t   vname;
+    ngx_str_t                          vname;
+    ngx_http_complex_value_t          *cv;
+    ngx_http_compile_complex_value_t   ccv;
 
     ngx_http_upstream_sticky_srv_conf_t  *scf;
 
@@ -252,21 +233,26 @@ ngx_http_upstream_init_sticky(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 
     if (scf->cookie.len) {
 
-        vname.len = sizeof("cookie_") - 1 + scf->cookie.len;
+        vname.len = sizeof("$cookie_") - 1 + scf->cookie.len;
         vname.data = ngx_palloc(cf->pool, vname.len);
         if (vname.data == NULL) {
             return NGX_ERROR;
         }
 
-        (void) ngx_sprintf(vname.data, "cookie_%V", &scf->cookie);
+        (void) ngx_sprintf(vname.data, "$cookie_%V", &scf->cookie);
 
-        v = ngx_array_push(&scf->lookup_vars);
-        if (v == NULL) {
+        cv = ngx_array_push(&scf->lookup_vars);
+        if (cv == NULL) {
             return NGX_ERROR;
         }
 
-        *v = ngx_http_get_variable_index(cf, &vname);
-        if (*v == NGX_ERROR) {
+        ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
+
+        ccv.cf = cf;
+        ccv.value = &vname;
+        ccv.complex_value = cv;
+
+        if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
             return NGX_ERROR;
         }
     }
@@ -279,9 +265,8 @@ static ngx_int_t
 ngx_http_upstream_init_sticky_peer(ngx_http_request_t *r,
     ngx_http_upstream_srv_conf_t *us)
 {
-    ngx_int_t                             *vars;
     ngx_uint_t                             i;
-    ngx_http_variable_value_t             *vv;
+    ngx_http_complex_value_t              *vars;
     ngx_http_upstream_sticky_srv_conf_t   *scf;
     ngx_http_upstream_sticky_peer_data_t  *sp;
 
@@ -290,16 +275,18 @@ ngx_http_upstream_init_sticky_peer(ngx_http_request_t *r,
 
     scf = ngx_http_conf_upstream_srv_conf(us, ngx_http_upstream_sticky_module);
 
+    if (scf->original_init_peer(r, us) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
     sp = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_sticky_peer_data_t));
     if (sp == NULL) {
         return NGX_ERROR;
     }
 
-    ngx_http_set_ctx(r, sp, ngx_http_upstream_sticky_module);
+    sp->conf = scf;
 
-    if (scf->original_init_peer(r, us) != NGX_OK) {
-        return NGX_ERROR;
-    }
+    ngx_http_set_ctx(r, sp, ngx_http_upstream_sticky_module);
 
     sp->original_get_peer = r->upstream->peer.get;
     r->upstream->peer.get = ngx_http_upstream_get_sticky_peer;
@@ -310,17 +297,16 @@ ngx_http_upstream_init_sticky_peer(ngx_http_request_t *r,
 
     for (i = 0; i < scf->lookup_vars.nelts; i++) {
 
-        vv = ngx_http_get_indexed_variable(r, vars[i]);
+        if (ngx_http_complex_value(r, &vars[i], &sp->hint) != NGX_OK) {
+            return NGX_ERROR;
+        }
 
-        if (vv == NULL || vv->not_found || vv->len == 0) {
+        if (sp->hint.len == 0) {
             continue;
         }
 
-        sp->hint.data = vv->data;
-        sp->hint.len = vv->len;
-
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "sticky: extracted hint %V from variable %ui",
+                       "sticky: extracted hint \"%V\" from variable %ui",
                        &sp->hint, i);
         break;
     }
@@ -345,7 +331,7 @@ ngx_http_upstream_get_sticky_peer(ngx_peer_connection_t *pc, void *data)
 
     ngx_int_t                              rc;
     ngx_http_request_t                    *r;
-    ngx_http_upstream_sticky_srv_conf_t   *scf;
+    ngx_http_upstream_state_t             *us;
     ngx_http_upstream_sticky_peer_data_t  *sp;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0, "sticky: get peer");
@@ -357,35 +343,50 @@ ngx_http_upstream_get_sticky_peer(ngx_peer_connection_t *pc, void *data)
 
     sp = ngx_http_get_module_ctx(r, ngx_http_upstream_sticky_module);
 
-    scf = ngx_http_conf_upstream_srv_conf(r->upstream->upstream,
-                                          ngx_http_upstream_sticky_module);
+    if (sp->hint.len == 0) {
+        us = r->upstream->state;
+        us->sticky_status = NGX_HTTP_UPSTREAM_STICKY_STATUS_NEW;
 
-    rc = ngx_http_upstream_sticky_select_peer(rrp, sp, pc);
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                       "sticky: no hint provided");
 
-    if (rc == NGX_BUSY) {
-        pc->name = rrp->peers->name;
-        return NGX_BUSY;
-    }
+    } else {
 
-    if (rc == NGX_DECLINED) {
-        rc = sp->original_get_peer(pc, data);
-        if (rc != NGX_OK) {
-            return rc;
+        rc = ngx_http_upstream_sticky_select_peer(rrp, sp, pc, &sp->hint);
+
+        switch (rc) {
+        case NGX_OK:
+            goto peer_selected;
+
+        case NGX_DECLINED:
+            /* use original balancer */
+            break;
+
+        case NGX_BUSY:
+            pc->name = rrp->peers->name;
+            return NGX_BUSY;
         }
     }
 
-    /* rc == NGX_OK */
-
-    if (scf->cookie.len == 0) {
-        /* sticky route */
+    rc = sp->original_get_peer(pc, data);
+    if (rc != NGX_OK) {
         return rc;
     }
 
-    if (ngx_http_upstream_sticky_set_cookie(r, scf, sp, &pc->sid) != NGX_OK) {
+peer_selected:
+
+    if (sp->conf->cookie.len == 0) {
+        /* sticky route */
+        return NGX_OK;
+    }
+
+    if (ngx_http_upstream_sticky_set_cookie(r, sp->conf, sp, &pc->sid)
+        != NGX_OK)
+    {
         return NGX_ERROR;
     }
 
-    return rc;
+    return NGX_OK;
 }
 
 
@@ -394,7 +395,7 @@ ngx_http_upstream_sticky_set_cookie(ngx_http_request_t *r,
     ngx_http_upstream_sticky_srv_conf_t *scf,
     ngx_http_upstream_sticky_peer_data_t *sp, ngx_str_t *sid)
 {
-    u_char      *p, *cookie, hashed[NGX_HTTP_UPSTREAM_SID_LEN];
+    u_char      *p, *cookie, hashed[NGX_STICKY_SID_LEN];
     size_t       len;
     ngx_str_t    value, tmp;
     ngx_uint_t   i;
@@ -404,7 +405,7 @@ ngx_http_upstream_sticky_set_cookie(ngx_http_request_t *r,
 
     if (scf->secret) {
         tmp.data = hashed;
-        tmp.len = ngx_http_upstream_sticky_hash(sid, &sp->salt, hashed);
+        tmp.len = ngx_sticky_hash(sid, &sp->salt, hashed);
 
         sid = &tmp;
     }
@@ -504,7 +505,8 @@ ngx_http_upstream_sticky_create_conf(ngx_conf_t *cf)
         return NULL;
     }
 
-    if (ngx_array_init(&conf->lookup_vars, cf->pool, 4, sizeof(ngx_uint_t))
+    if (ngx_array_init(&conf->lookup_vars, cf->pool, 4,
+                       sizeof(ngx_http_complex_value_t))
         != NGX_OK)
     {
         return NULL;
@@ -652,30 +654,27 @@ ngx_http_upstream_sticky_route(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_upstream_sticky_srv_conf_t  *scf = conf;
 
-    ngx_str_t   *value;
-    ngx_int_t   *v;
-    ngx_uint_t   i;
+    ngx_str_t                         *value;
+    ngx_uint_t                         i;
+    ngx_http_complex_value_t          *cv;
+    ngx_http_compile_complex_value_t   ccv;
 
     value = cf->args->elts;
 
     for (i = 2; i < cf->args->nelts; i++) {
 
-        if (value[i].len < 2 || value[i].data[0] != '$') {
-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                               "variables expected as \"route\" arguments");
+        cv = ngx_array_push(&scf->lookup_vars);
+        if (cv == NULL) {
             return NGX_CONF_ERROR;
         }
 
-        value[i].len--;
-        value[i].data++;
+        ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
 
-        v = ngx_array_push(&scf->lookup_vars);
-        if (v == NULL) {
-            return NGX_CONF_ERROR;
-        }
+        ccv.cf = cf;
+        ccv.value = &value[i];
+        ccv.complex_value = cv;
 
-        *v = ngx_http_get_variable_index(cf, &value[i]);
-        if (*v == NGX_ERROR) {
+        if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
             return NGX_CONF_ERROR;
         }
     }
