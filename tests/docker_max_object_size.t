@@ -14,6 +14,7 @@ use Test::More;
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
+use Test::Docker;
 use Test::Nginx;
 
 ###############################################################################
@@ -21,95 +22,59 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-plan(skip_all => 'unsafe, will stop all currently active containers.')
-	unless $ENV{TEST_ANGIE_UNSAFE};
+my $t = Test::Nginx->new()->has(qw/http upstream_zone docker proxy/);
 
-my $endpoint = "";
-my $container_engine = "";
+my $docker_helper = Test::Docker->new();
 
-if (system('docker version 1>/dev/null 2>&1') == 0) {
-	$endpoint = '/var/run/docker.sock';
-	$container_engine = 'docker';
-
-} elsif (system('podman version 1>/dev/null 2>&1') == 0) {
-	$endpoint = '/tmp/podman.sock';
-	$container_engine = 'podman';
-
-} else {
-	plan(skip_all => 'no Docker');
-}
-
-system("$container_engine network create test_net 1>/dev/null 2>&1");
-system("$container_engine network inspect test_net 1>/dev/null 2>&1") == 0
-	or die "can't create $container_engine network";
-
-my $registry = $ENV{TEST_ANGIE_DOCKER_REGISTRY} // 'docker.io';
-
-my $t = Test::Nginx->new()
-	->has(qw/http http_api upstream_zone docker upstream_sticky proxy/)
-	->plan(3);
+$t->plan(4);
 
 ###############################################################################
 
-stop_containers();
+my $labels = ' -l "angie.http.upstreams.u.port=80"'
+	. ' -l "angie.http.upstreams.u.weight=2"'
+	. ' -l "angie.http.upstreams.u.max_conns=20"'
+	. ' -l "angie.http.upstreams.u.max_fails=5"'
+	. ' -l "angie.http.upstreams.u.slow_start=10s"'
+	. ' -l "angie.http.upstreams.u.fail_timeout=10s"'
+	. ' -l "angie.http.upstreams.u.backup=false"'
+	. ' -l "angie.http.upstreams.u.sid=sid1"';
 
-start_containers($t, 5);
+$docker_helper->start_containers(5, $labels);
 
-restart_with_size($t, '4k');
-check_log_error($t);
+restart_with_size($t, $docker_helper->{endpoint}, '4k');
+check_log_error($t, $docker_helper->{container_engine});
 
-restart_with_size($t, '7k');
-check_log_error($t);
+restart_with_size($t, $docker_helper->{endpoint}, '7k');
+check_log_error($t, $docker_helper->{container_engine});
 
-restart_with_size($t, '16k');
-check_log_ok($t);
+restart_with_size($t, $docker_helper->{endpoint}, '16k');
+check_log_ok($t, $docker_helper->{container_engine});
 
-stop_containers();
+$docker_helper->stop_containers();
 
 ###############################################################################
-
-sub lines {
-	my ($t, $file, $pattern) = @_;
-
-	my $path = $t->testdir() . '/' . $file;
-	open my $fh, '<', $path or return "$!";
-	my $value = map { $_ =~ /\Q$pattern\E/ } (<$fh>);
-	close $fh;
-	return $value;
-}
 
 sub check_log_ok {
-	my ($t) = @_;
+	my ($t, $container_engine) = @_;
 
-	for (1 .. 50) {
-		last if lines($t, 'angie_docker.log', 'Docker peer');
-		select undef, undef, undef, 0.5;
-	}
+	isnt($t->find_in_file('angie_docker.log', qr/\QDocker peer\E/), 0,
+		"$container_engine peer created");
 
-	is(lines($t, 'angie_docker.log', '[error]'), 0,
-		'good size of Docker object');
+	is($t->find_in_file('angie_docker.log', qr/\[error\]/), 0,
+		"good size of $container_engine object");
 }
 
 sub check_log_error {
-	my ($t) = @_;
+	my ($t, $container_engine) = @_;
 
-	my $found = 0;
-
-	for (1 .. 50) {
-		$found = lines($t, 'angie_docker.log', 'Docker sends too large');
-		last if $found;
-		select undef, undef, undef, 0.5;
-	}
-
-	ok($found, 'too large Docker object');
+	ok($t->find_in_file('angie_docker.log', 'Docker sends too large'),
+		"too large $container_engine object");
 }
 
 sub restart_with_size {
-	my ($t, $size) = @_;
+	my ($t, $endpoint, $size) = @_;
 
 	my $tdir = $t->testdir();
-
-	$t->stop();
 
 	unlink("$tdir/angie_docker.log");
 
@@ -147,41 +112,7 @@ http {
 EOF
 
 	$t->run();
-}
-
-sub start_containers {
-	my ($t, $count) = @_;
-
-	my $labels = '-l "angie.network=test_net"'
-		 . ' -l "angie.http.upstreams.u.port=80"'
-		 . ' -l "angie.http.upstreams.u.weight=2"'
-		 . ' -l "angie.http.upstreams.u.max_conns=20"'
-		 . ' -l "angie.http.upstreams.u.max_fails=5"'
-		 . ' -l "angie.http.upstreams.u.slow_start=10s"'
-		 . ' -l "angie.http.upstreams.u.fail_timeout=10s"'
-		 . ' -l "angie.http.upstreams.u.backup=false"'
-		 . ' -l "angie.http.upstreams.u.sid=sid1"';
-
-	for (my $idx = 0; $idx < $count; $idx++) {
-		 system("$container_engine run -d $labels --name whoami-$idx"
-			  . " --network test_net $registry/traefik/whoami"
-			  . ' 1>/dev/null') == 0
-			  or die "cannot start containers";
-	}
-}
-
-sub stop_containers {
-	if (`$container_engine ps -a -q` eq '') {
-		return;
-	}
-
-	system("$container_engine stop \$($container_engine ps -a -q)"
-		. ' 1>/dev/null 2>&1') == 0
-		 or die "cannot stop containers";
-
-	system("$container_engine rm \$($container_engine ps -a -q)"
-		. ' 1>/dev/null 2>&1') == 0
-		 or die "cannot remove containers";
+	$t->stop();
 }
 
 ###############################################################################
