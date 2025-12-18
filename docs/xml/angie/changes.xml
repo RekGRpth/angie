@@ -27,6 +27,19 @@ the statistics API now includes information on ACME clients.
 </para>
 </change>
 
+<change type="feature">
+<para lang="ru">
+поддержка методов аутентификации XOAUTH2 и OAUTHBEARER
+в почтовом прокси-сервере.<br/>
+Спасибо Rob Mueller и Максиму Дунину (freenginx).
+</para>
+<para lang="en">
+XOAUTH2 and OAUTHBEARER authentication mechanisms support
+in the mail proxy module.<br/>
+Thanks to Rob Mueller and Maxim Dounin (freenginx).
+</para>
+</change>
+
 <change type="bugfix">
 <para lang="ru">
 если ACME-клиент не использовался в блоке "stream" в директивах "acme",
@@ -324,6 +337,30 @@ support for ALPN validation for ACME, enabled by specifying "alpn" in the
 <para lang="en">
 the "route" parameter of the "sticky" directive may now
 include complex values.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+теперь Angie не пытается загрузить кэш из файла по прежнему адресу
+при тестировании конфигурации
+</para>
+<para lang="en">
+now Angie does not try to load cache from the file using previous address
+when testing configuration
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при совместном использовании директив try_files и proxy_pass с URI
+в рабочем процессе мог произойти segmentation fault.
+исправление портировано из nginx 1.29.4.
+</para>
+<para lang="en">
+a segmentation fault might occur in a worker process
+if the "try_files" directive and "proxy_pass" with a URI were used.
+the fix was ported from nginx 1.29.4.
 </para>
 </change>
 
