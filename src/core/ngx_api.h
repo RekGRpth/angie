@@ -40,6 +40,7 @@ typedef union {
     ngx_str_t                  *str;
     ngx_uint_t                  flag;
     int64_t                     num;
+    double                      frac;
     ngx_atomic_t              **atpp;
     ngx_time_t                 *tp;
     size_t                      off;
@@ -62,6 +63,7 @@ typedef struct {
     ngx_api_entry_t             entry;
     void                       *ctx;
     void                       *elts;
+    ngx_uint_t                  read_only;  /* unsigned read_only:1 */
 } ngx_api_iter_ctx_t;
 
 typedef ngx_int_t (*ngx_api_iter_pt)(ngx_api_iter_ctx_t *ictx,
@@ -69,6 +71,8 @@ typedef ngx_int_t (*ngx_api_iter_pt)(ngx_api_iter_ctx_t *ictx,
 
 ngx_int_t ngx_api_object_iterate(ngx_api_iter_pt iter, ngx_api_iter_ctx_t *ictx,
                                  ngx_api_ctx_t *actx);
+
+ngx_int_t ngx_api_next_segment(ngx_str_t *path, ngx_str_t *name);
 
 
 ngx_int_t ngx_api_object_handler(ngx_api_entry_data_t data,
@@ -78,6 +82,8 @@ ngx_int_t ngx_api_string_handler(ngx_api_entry_data_t data,
 ngx_int_t ngx_api_flag_handler(ngx_api_entry_data_t data,
     ngx_api_ctx_t *actx, void *ctx);
 ngx_int_t ngx_api_number_handler(ngx_api_entry_data_t data,
+    ngx_api_ctx_t *actx, void *ctx);
+ngx_int_t ngx_api_fractional_handler(ngx_api_entry_data_t data,
     ngx_api_ctx_t *actx, void *ctx);
 ngx_int_t ngx_api_time_handler(ngx_api_entry_data_t data,
     ngx_api_ctx_t *actx, void *ctx);
