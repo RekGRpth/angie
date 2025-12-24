@@ -341,7 +341,7 @@ static ngx_command_t  ngx_http_metric_commands[] = {
       NULL },
 
     { ngx_string("metric"),
-      NGX_HTTP_LOC_CONF|NGX_CONF_TAKE23,
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE23,
       ngx_http_metric,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
@@ -4179,6 +4179,8 @@ ngx_http_metric_hist_api(ngx_api_entry_data_t data, ngx_api_ctx_t *actx,
     hist_imctx.elts = buckets->elts;
     hist_imctx.pos = imctx->pos;
     hist_imctx.end = imctx->end;
+
+    ngx_memzero(&ictx, sizeof(ngx_api_iter_ctx_t));
 
     ictx.entry.handler = ngx_api_number_handler;
     ictx.ctx = &hist_imctx;
