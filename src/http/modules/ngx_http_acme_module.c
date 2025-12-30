@@ -167,6 +167,7 @@ typedef struct {
 
 typedef struct ngx_acme_client_s           ngx_acme_client_t;
 typedef struct ngx_http_acme_main_conf_s   ngx_http_acme_main_conf_t;
+typedef struct ngx_http_acme_port_conf_s   ngx_http_acme_port_conf_t;
 typedef struct ngx_http_acme_srv_conf_s    ngx_http_acme_srv_conf_t;
 typedef struct ngx_http_acme_session_s     ngx_http_acme_session_t;
 typedef struct ngx_http_acme_sh_keyauth_s  ngx_http_acme_sh_keyauth_t;
@@ -207,6 +208,12 @@ struct ngx_acme_client_s {
 };
 
 
+struct ngx_http_acme_port_conf_s {
+    ngx_addr_t                  *addr;
+    ngx_uint_t                   port_only;  /* unsigned  port_only:1; */
+};
+
+
 struct ngx_http_acme_main_conf_s {
     ngx_http_conf_ctx_t         *ctx;
     ngx_acme_client_t           *current;
@@ -228,8 +235,8 @@ struct ngx_http_acme_main_conf_s {
     ngx_http_conf_ctx_t         *listen_ctx;
     ngx_http_core_srv_conf_t    *listen_srv;
     ngx_connection_handler_pt    default_dns_handler;
-    ngx_addr_t                  *dns_port;
-    ngx_addr_t                  *http_port;
+    ngx_http_acme_port_conf_t    dns_port;
+    ngx_http_acme_port_conf_t    http_port;
 };
 
 
@@ -5500,7 +5507,7 @@ ngx_http_acme_shm_init(ngx_shm_zone_t *shm_zone, void *data)
     }
 
     if (ngx_http_acme_challenge_is(amcf, NGX_AC_HTTP_01)
-        && amcf->http_port != NULL)
+        && amcf->http_port.addr != NULL)
     {
         ngx_http_acme_set_http_listening_handler(amcf);
     }
@@ -5522,7 +5529,7 @@ ngx_http_acme_set_http_listening_handler(ngx_http_acme_main_conf_t *amcf)
     ngx_cycle_t      *cycle;
     ngx_listening_t  *ls;
 
-    addr = amcf->http_port;
+    addr = amcf->http_port.addr;
     port = ngx_inet_get_port(addr->sockaddr);
     cycle = amcf->cf->cycle;
 
@@ -6547,12 +6554,17 @@ ngx_http_acme_add_dns_listen(ngx_http_acme_main_conf_t *amcf)
 
     cycle = amcf->cf->cycle;
 
-    if (amcf->dns_port != NULL) {
-        addr = amcf->dns_port;
+    if (amcf->dns_port.addr != NULL) {
+        addr = amcf->dns_port.addr;
 
     } else {
         addr = &tmp;
-        ngx_parse_addr_port(cycle->pool, addr, (u_char *) "0.0.0.0:53", 10);
+
+        if (ngx_parse_addr_port(cycle->pool, addr, (u_char *) "0.0.0.0:53", 10)
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
 
         if (geteuid() != 0) {
             ngx_log_error(NGX_LOG_WARN, amcf->cf->log, 0,
@@ -6616,8 +6628,8 @@ ngx_http_acme_add_http_listen(ngx_http_core_main_conf_t *cmcf,
 
     cf = amcf->cf;
 
-    if (amcf->http_port != NULL) {
-        addr = amcf->http_port;
+    if (amcf->http_port.addr != NULL) {
+        addr = amcf->http_port.addr;
 
     } else {
         addr = ngx_palloc(cf->pool, sizeof(ngx_addr_t));
@@ -6625,7 +6637,11 @@ ngx_http_acme_add_http_listen(ngx_http_core_main_conf_t *cmcf,
             return NGX_ERROR;
         }
 
-        ngx_parse_addr_port(cf->pool, addr, (u_char *) "0.0.0.0:80", 10);
+        if (ngx_parse_addr_port(cf->pool, addr, (u_char *) "0.0.0.0:80", 10)
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
 
         if (geteuid() != 0) {
             ngx_log_error(NGX_LOG_WARN, amcf->cf->log, 0,
@@ -6633,7 +6649,8 @@ ngx_http_acme_add_http_listen(ngx_http_core_main_conf_t *cmcf,
                           "challenges, superuser required");
         }
 
-        amcf->http_port = addr;
+        amcf->http_port.addr = addr;
+        amcf->http_port.port_only = 1;
     }
 
     if (cmcf->ports != NULL) {
@@ -6649,12 +6666,13 @@ ngx_http_acme_add_http_listen(ngx_http_core_main_conf_t *cmcf,
 
                 if (caddr->opt.type == SOCK_STREAM
                     && port == ngx_inet_get_port(sockaddr)
-                    && (ngx_inet_wildcard(sockaddr)
+                    && (amcf->http_port.port_only
+                        || ngx_inet_wildcard(sockaddr)
                         || ngx_cmp_sockaddr(addr->sockaddr, addr->socklen,
                                             sockaddr, socklen,  0)
                            == NGX_OK))
                 {
-                    amcf->http_port = NULL;
+                    amcf->http_port.addr = NULL;
                     return NGX_OK;
                 }
             }
@@ -6863,30 +6881,33 @@ ngx_http_acme_port(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     char  *p = conf;
 
-    u_char        buf[NGX_INT_T_LEN + 8];
-    ngx_str_t     value;
-    ngx_int_t     rc;
-    ngx_addr_t  **port;
+    ngx_str_t                   value;
+    ngx_int_t                   rc;
+    ngx_addr_t                 *addr;
+    ngx_http_acme_port_conf_t  *port_conf;
+    u_char                      buf[NGX_INT_T_LEN + 8];
 
-    port = (ngx_addr_t **) (p + cmd->offset);
+    port_conf = (ngx_http_acme_port_conf_t *) (p + cmd->offset);
 
-    if (*port != NULL) {
+    if (port_conf->addr != NULL) {
         return "is duplicate";
     }
 
-    *port = ngx_pcalloc(cf->pool, sizeof(ngx_addr_t));
-    if (*port == NULL) {
+    addr = ngx_palloc(cf->pool, sizeof(ngx_addr_t));
+    if (addr == NULL) {
         return NGX_CONF_ERROR;
     }
 
     value = ((ngx_str_t *) cf->args->elts)[1];
 
     if (ngx_atoi(value.data, value.len) != NGX_ERROR) {
+        port_conf->port_only = 1;
+
         value.len = ngx_snprintf(buf, sizeof(buf), "0.0.0.0:%V", &value) - buf;
         value.data = buf;
     }
 
-    rc = ngx_parse_addr_port(cf->pool, *port, value.data, value.len);
+    rc = ngx_parse_addr_port(cf->pool, addr, value.data, value.len);
     if (rc == NGX_ERROR) {
         return NGX_CONF_ERROR;
     }
@@ -6897,9 +6918,11 @@ ngx_http_acme_port(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
-    if (ngx_inet_get_port((*port)->sockaddr) == 0) {
-        ngx_inet_set_port((*port)->sockaddr, *(uintptr_t *) cmd->post);
+    if (ngx_inet_get_port(addr->sockaddr) == 0) {
+        ngx_inet_set_port(addr->sockaddr, *(uintptr_t *) cmd->post);
     }
+
+    port_conf->addr = addr;
 
     return NGX_CONF_OK;
 }
@@ -7444,14 +7467,22 @@ ngx_api_acme_iter(ngx_api_iter_ctx_t *ictx, ngx_api_ctx_t *actx)
 
     sh = ictx->ctx;
 
-    ngx_rwlock_rlock(&(*cli_p)->sh_cert->lock);
+    if ((*cli_p)->sh_cert == NULL) {
+        ngx_api_set_cli_status_unlocked(sh, NGX_API_CLI_DISABLED,
+                                        "The client is disabled in "
+                                        "the configuration.");
+        sh->expiry_time = 0;
+        sh->cert_status = NGX_ACME_CERT_MISSING;
 
-    ngx_memcpy(sh, &(*cli_p)->sh_cert->cli, sizeof(ngx_api_acme_sh_client_t));
+    } else {
+        ngx_rwlock_rlock(&(*cli_p)->sh_cert->lock);
 
-    ngx_rwlock_unlock(&(*cli_p)->sh_cert->lock);
+        ngx_memcpy(sh, &(*cli_p)->sh_cert->cli, sizeof(ngx_api_acme_sh_client_t));
 
-    ictx->entry.name.data = (*cli_p)->name.data;
-    ictx->entry.name.len = (*cli_p)->name.len;
+        ngx_rwlock_unlock(&(*cli_p)->sh_cert->lock);
+    }
+
+    ictx->entry.name = (*cli_p)->name;
 
     ictx->elts = cli_p + 1;
 
