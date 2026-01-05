@@ -5,6 +5,35 @@
 <change_log title="Angie">
 
 
+<changes ver="1.11.2" date="">
+
+<change type="bugfix">
+<para lang="ru">
+HTTP/3 запросы могли завершаться с ошибкой из-за ошибки с максимальным
+размером пакета;
+проблема появилась в 1.11.0.
+</para>
+<para lang="en">
+HTTP/3 requests might fail due to a maximum packet size error;
+the bug had appeared in 1.11.0.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+HTTP/3 запросы не принимались при использовании ipv6 wildcard-адреса и
+включённом модуле bpf;
+проблема появилась в 1.11.0.
+</para>
+<para lang="en">
+HTTP/3 requests were not accepted if using ipv6 wildcard address and bpf module;
+the bug had appeared in 1.11.0.
+</para>
+</change>
+
+</changes>
+
+
 <changes ver="1.11.1" date="2025-12-30">
 
 <change type="change">
