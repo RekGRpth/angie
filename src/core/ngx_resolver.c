@@ -656,6 +656,8 @@ ngx_resolver_parse_resolv_conf(ngx_resolver_t *r)
     ngx_log_debug1(NGX_LOG_DEBUG_CORE, r->log, 0,
                    "\"%V\" was changed", &r->resolv_conf);
 
+    ngx_memzero(&file, sizeof(ngx_file_t));
+
     file.name = r->resolv_conf;
     file.log = r->log;
 
@@ -793,7 +795,11 @@ ngx_resolver_parse_resolv_conf(ngx_resolver_t *r)
     } while ((line = (u_char *) strtok(NULL, "\n")) != NULL);
 
     ngx_free(buf);
-    ngx_close_file(file.fd);
+
+    if (ngx_close_file(file.fd) == NGX_FILE_ERROR) {
+        ngx_log_error(NGX_LOG_ALERT, r->log, ngx_errno,
+                      ngx_close_file_n " \"%V\" failed", &file.name);
+    }
 
     rec = r->last_conf_connection->next;
 
@@ -821,7 +827,10 @@ error:
 
 file_error:
 
-    ngx_close_file(file.fd);
+    if (ngx_close_file(file.fd) == NGX_FILE_ERROR) {
+        ngx_log_error(NGX_LOG_ALERT, r->log, ngx_errno,
+                      ngx_close_file_n " \"%V\" failed", &file.name);
+    }
 
 cleanup:
 

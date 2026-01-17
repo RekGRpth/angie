@@ -3,7 +3,7 @@
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
-# Tests for map module with volatile.
+# Tests for geo module with volatile.
 
 ###############################################################################
 
@@ -22,7 +22,7 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http map/);
+my $t = Test::Nginx->new()->has(qw/http rewrite geo/);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -36,16 +36,16 @@ events {
 http {
     %%TEST_GLOBALS_HTTP%%
 
-    map $uri $uri_cached {
-        /1/          /1/redirect;
-        /1/redirect  uncached;
+    geo $arg_ip $uri_cached {
+        192.0.2.1    /1/redirect;
+        192.0.2.2    uncached;
     }
 
-    map $uri $uri_uncached {
+    geo $arg_ip $uri_uncached {
         volatile;
 
-        /2/          /2/redirect;
-        /2/redirect  uncached;
+        192.0.2.1    /2/redirect;
+        192.0.2.2    uncached;
     }
 
     server {
@@ -56,6 +56,7 @@ http {
             index $uri_cached;
         }
         location /1/redirect {
+            set $args ip=192.0.2.2;
             add_header X-URI $uri_cached always;
         }
 
@@ -63,6 +64,7 @@ http {
             index $uri_uncached;
         }
         location /2/redirect {
+            set $args ip=192.0.2.2;
             add_header X-URI $uri_uncached always;
         }
     }
@@ -70,11 +72,11 @@ http {
 
 EOF
 
-$t->run()->plan(2);
+$t->try_run('no geo volatile')->plan(2);
 
 ###############################################################################
 
-like(http_get('/1/'), qr!X-URI: /1/redirect!, 'map');
-like(http_get('/2/'), qr/X-URI: uncached/, 'map volatile');
+like(http_get('/1/?ip=192.0.2.1'), qr!X-URI: /1/redirect!, 'geo');
+like(http_get('/2/?ip=192.0.2.1'), qr/X-URI: uncached/, 'geo volatile');
 
 ###############################################################################
