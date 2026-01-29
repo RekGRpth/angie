@@ -3,7 +3,7 @@
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
-# Tests for HTTP/2 protocol with ssl.
+# Tests for HTTP/2 backend with ssl.
 
 ###############################################################################
 
@@ -16,15 +16,13 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
 use Test::Nginx;
-use Test::Nginx::HTTP2;
 
 ###############################################################################
 
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()
-	->has(qw/http http_ssl http_v2 rewrite socket_ssl_alpn/)
+my $t = Test::Nginx->new()->has(qw/http http_v2 http_ssl proxy/)
 	->has_daemon('openssl');
 
 plan(skip_all => 'no ALPN support in OpenSSL')
@@ -43,7 +41,7 @@ http {
     %%TEST_GLOBALS_HTTP%%
 
     server {
-        listen       127.0.0.1:8443 ssl;
+        listen       127.0.0.1:8081 ssl;
         server_name  localhost;
 
         http2 on;
@@ -51,17 +49,16 @@ http {
         ssl_certificate_key localhost.key;
         ssl_certificate localhost.crt;
 
-        location /h2 {
-            return 200 $http2;
-        }
-        location /sp {
-            return 200 $server_protocol;
-        }
-        location /scheme {
-            return 200 $scheme;
-        }
-        location /https {
-            return 200 $https;
+        location / { }
+    }
+
+    server {
+        listen       127.0.0.1:8080;
+        server_name  localhost;
+
+        location / {
+            proxy_pass https://127.0.0.1:8081;
+            proxy_http_version 2;
         }
     }
 }
@@ -86,27 +83,13 @@ foreach my $name ('localhost') {
 		or die "Can't create certificate for $name: $!\n";
 }
 
-$t->run()->plan(4);
+sleep 1 if $^O eq 'MSWin32';
+
+$t->write_file('index.html', 'SEE-THIS');
+$t->try_run('no proxy_http_version 2')->plan(1);
 
 ###############################################################################
 
-is(get('/h2'), 'h2', 'http2 variable');
-is(get('/sp'), 'HTTP/2.0', 'server_protocol variable');
-is(get('/scheme'), 'https', 'scheme variable');
-is(get('/https'), 'on', 'https variable');
-
-###############################################################################
-
-sub get {
-	my ($uri) = @_;
-
-	my $sock = http('', start => 1, SSL => 1, SSL_alpn_protocols => ['h2']);
-	my $s = Test::Nginx::HTTP2->new(undef, socket => $sock);
-	my $sid = $s->new_stream({ path => $uri });
-	my $frames = $s->read(all => [{ sid => $sid, fin => 1 }]);
-
-	my ($frame) = grep { $_->{type} eq "DATA" } @$frames;
-	return $frame->{data};
-}
+like(http_get('/'), qr/200 OK/s, 'ssl');
 
 ###############################################################################

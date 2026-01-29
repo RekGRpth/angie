@@ -410,21 +410,18 @@ ngx_http_parse_request_line(ngx_http_request_t *r, ngx_buf_t *b)
 
         case sw_host_end:
 
+            if (ch == ':') {
+                state = sw_port;
+                break;
+            }
+
             r->host_end = p;
 
             if (r->method == NGX_HTTP_CONNECT) {
-                if (ch == ':') {
-                    state = sw_port;
-                    break;
-                }
-
                 return NGX_HTTP_PARSE_INVALID_REQUEST;
             }
 
             switch (ch) {
-            case ':':
-                state = sw_port;
-                break;
             case '/':
                 r->uri_start = p;
                 state = sw_after_slash_in_uri;
@@ -492,13 +489,10 @@ ngx_http_parse_request_line(ngx_http_request_t *r, ngx_buf_t *b)
 
         case sw_port:
             if (ch >= '0' && ch <= '9') {
-                if (r->port >= 6553 && (r->port > 6553 || (ch - '0') > 5)) {
-                    return NGX_HTTP_PARSE_INVALID_REQUEST;
-                }
-
-                r->port = r->port * 10 + (ch - '0');
                 break;
             }
+
+            r->host_end = p;
 
             if (r->method == NGX_HTTP_CONNECT) {
                 if (ch == ' ') {
@@ -2272,12 +2266,6 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
                 case CR:
                     state = sw_last_chunk_extension_almost_done;
                     break;
-                case LF:
-                    if (keep_trailers) {
-                        goto done;
-                    }
-                    state = sw_trailer;
-                    break;
                 case ';':
                 case ' ':
                 case '\t':
@@ -2293,9 +2281,6 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
             switch (ch) {
             case CR:
                 state = sw_chunk_extension_almost_done;
-                break;
-            case LF:
-                state = sw_chunk_data;
                 break;
             case ';':
             case ' ':
@@ -2314,8 +2299,7 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
                 state = sw_chunk_extension_almost_done;
                 break;
             case LF:
-                state = sw_chunk_data;
-                break;
+                goto invalid;
             default:
                 ctx->skipped++;
             }
@@ -2337,9 +2321,6 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
             case CR:
                 state = sw_after_data_almost_done;
                 break;
-            case LF:
-                state = sw_chunk_start;
-                break;
             default:
                 goto invalid;
             }
@@ -2358,11 +2339,7 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
                 state = sw_last_chunk_extension_almost_done;
                 break;
             case LF:
-                if (keep_trailers) {
-                    goto done;
-                }
-                state = sw_trailer;
-                break;
+                goto invalid;
             default:
                 ctx->skipped++;
             }
@@ -2384,7 +2361,7 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
                 state = sw_trailer_almost_done;
                 break;
             case LF:
-                goto done;
+                goto invalid;
             default:
                 state = sw_trailer_header;
             }
@@ -2402,8 +2379,7 @@ ngx_http_parse_chunked(ngx_http_request_t *r, ngx_buf_t *b,
                 state = sw_trailer_header_almost_done;
                 break;
             case LF:
-                state = sw_trailer;
-                break;
+                goto invalid;
             default:
                 ctx->skipped++;
             }
@@ -2431,35 +2407,45 @@ data:
     switch (state) {
 
     case sw_chunk_start:
-        ctx->length = 3 /* "0" LF LF */;
+        ctx->length = 5 /* "0" CRLF CRLF */;
         break;
     case sw_chunk_size:
-        ctx->length = 1 /* LF */
-                      + (ctx->size ? ctx->size + 4 /* LF "0" LF LF */
-                                   : 1 /* LF */);
+        ctx->length = 2 /* CRLF */
+                      + (ctx->size ? ctx->size + 7 /* CRLF "0" CRLF CRLF */
+                                   : 2 /* CRLF */);
         break;
     case sw_chunk_extension:
+        ctx->length = 2 /* CRLF */ + ctx->size + 7 /* CRLF "0" CRLF CRLF */;
+        break;
     case sw_chunk_extension_almost_done:
-        ctx->length = 1 /* LF */ + ctx->size + 4 /* LF "0" LF LF */;
+        ctx->length = 1 /* LF */ + ctx->size + 7 /* CRLF "0" CRLF CRLF */;
         break;
     case sw_chunk_data:
-        ctx->length = ctx->size + 4 /* LF "0" LF LF */;
+        ctx->length = ctx->size + 7 /* CRLF "0" CRLF CRLF */;
         break;
     case sw_after_data:
+        ctx->length = 7 /* CRLF "0" CRLF CRLF */;
+        break;
     case sw_after_data_almost_done:
-        ctx->length = 4 /* LF "0" LF LF */;
+        ctx->length = 6 /* LF "0" CRLF CRLF */;
         break;
     case sw_last_chunk_extension:
+        ctx->length = 4 /* CRLF CRLF */;
+        break;
     case sw_last_chunk_extension_almost_done:
-        ctx->length = 2 /* LF LF */;
+        ctx->length = 3 /* LF CRLF */;
         break;
     case sw_trailer:
+        ctx->length = 2 /* CRLF */;
+        break;
     case sw_trailer_almost_done:
         ctx->length = 1 /* LF */;
         break;
     case sw_trailer_header:
+        ctx->length = 4 /* CRLF CRLF */;
+        break;
     case sw_trailer_header_almost_done:
-        ctx->length = 2 /* LF LF */;
+        ctx->length = 3 /* LF CRLF */;
         break;
 
     }
