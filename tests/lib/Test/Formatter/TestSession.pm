@@ -27,6 +27,7 @@ BEGIN {
 		xresults        => sub { shift; shift; },
 		tc_errors       => sub { shift; shift; },
 		tc_misc         => sub { shift; shift; },
+		tc_end_time     => sub { shift; shift; },
 		meta            => sub { shift; shift; },
 		closed          => sub { shift; shift; },
 		tmp_fh          => sub { shift; shift; },
@@ -35,6 +36,8 @@ BEGIN {
 		err_lines       => sub { shift; shift; },
 		curr_tc_num     => sub { shift; shift; },
 		console_session => sub { shift; shift; },
+		verbosity       => sub { shift; shift; },
+		started_at      => sub { shift; shift; },
 		start_wall      => sub { shift; shift; },
 		start_user      => sub { shift; shift; },
 		start_cuser     => sub { shift; shift; },
@@ -56,11 +59,13 @@ sub _initialize {
 	$self->err_lines([]);
 	$self->tc_errors({});
 	$self->tc_misc({});
+	$self->tc_end_time([]);
+	$self->started_at(0);
 	$self->meta({});
 	$self->closed(0);
 	$self->curr_tc_num(0);
 
-	foreach my $arg (qw(test parser formatter console_session)) {
+	foreach my $arg (qw(test parser formatter console_session verbosity)) {
 		$self->$arg($args->{$arg}) if defined $args->{$arg};
 	}
 
@@ -91,6 +96,8 @@ sub result {
 
 	if ($result->is_test) {
 
+		push @{$self->tc_end_time}, time();
+
 		$result->{test_status}  = $result->has_todo ? 'todo-' : '';
 		$result->{test_status} .= $result->has_skip ? 'skip-' : '';
 		$result->{test_status} .= $result->is_actual_ok ? 'ok' : 'not-ok';
@@ -115,6 +122,10 @@ sub result {
 
 	push @{ $self->results }, $result;
 	push @{ $self->xresults }, \%$result;
+
+	if ($self->verbosity >= 2) {
+		print($result->{raw}."\n");
+	}
 }
 
 
@@ -125,6 +136,7 @@ sub close_test {
 	my ($user, $system, $cuser, $csystem) = times;
 
 
+	$self->{started_at} = $self->start_wall;
 	$self->{time_wall} = $wall - $self->start_wall;
 	$self->{time_user} = ($user - $self->start_user);
 	$self->{time_user_child} = ($cuser - $self->start_cuser);
@@ -152,6 +164,7 @@ sub session_report {
 		xresults => $self->xresults,
 		tc_errors => $self->tc_errors,
 		tc_misc => $self->tc_misc,
+		tc_end_time => $self->tc_end_time,
 		err_lines => $self->err_lines,
 	};
 
@@ -170,6 +183,7 @@ sub session_report {
 	$r->{test_status} = $r->{has_problems} ? 'failed' : 'passed';
 	$r->{elapsed_time} = $r->{end_time} - $r->{start_time};
 
+	$r->{started_at} = $self->{started_at};
 	$r->{time_wall} = $self->{time_wall};
 	$r->{time_user} = $self->{time_user};
 	$r->{time_user_child} = $self->{time_user_child};
