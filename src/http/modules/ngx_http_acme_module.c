@@ -237,6 +237,7 @@ struct ngx_http_acme_main_conf_s {
     ngx_connection_handler_pt    default_dns_handler;
     ngx_http_acme_port_conf_t    dns_port;
     ngx_http_acme_port_conf_t    http_port;
+    ngx_uint_t                   dns_ttl;
 };
 
 
@@ -425,7 +426,8 @@ static void ngx_http_acme_dns_close(ngx_connection_t *c);
 static void ngx_http_acme_dns_resend(ngx_event_t *wev);
 static ssize_t ngx_http_acme_parse_dns_request(ngx_connection_t *c, char **err);
 static ngx_buf_t *ngx_http_acme_create_dns_response(ngx_connection_t *c,
-    size_t quest_size);
+    size_t quest_size, uint32_t ttl);
+static char *ngx_acme_dns_ttl_check(ngx_conf_t *cf, void *post, void *data);
 static ngx_buf_t *ngx_http_acme_create_dns_error_response(ngx_connection_t *c);
 static ngx_int_t ngx_http_acme_run(ngx_http_acme_session_t *ses);
 static ngx_int_t ngx_http_acme_new_nonce(ngx_http_acme_session_t *ses);
@@ -497,6 +499,9 @@ static int ngx_clone_table_elt(ngx_pool_t *pool, ngx_str_t *dst,
 static size_t ngx_calc_cert_size(ngx_array_t *domains);
 
 
+static ngx_conf_post_t  ngx_acme_dns_ttl_post = { ngx_acme_dns_ttl_check };
+
+
 static const ngx_str_t ngx_acme_challenge_names[] = {
     ngx_string("http"),
     ngx_string("dns"),
@@ -560,6 +565,13 @@ static ngx_command_t  ngx_http_acme_commands[] = {
       NGX_HTTP_MAIN_CONF_OFFSET,
       offsetof(ngx_http_acme_main_conf_t, http_port),
       (void *) 80 },
+
+    { ngx_string("acme_dns_ttl"),
+      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_num_slot,
+      NGX_HTTP_MAIN_CONF_OFFSET,
+      offsetof(ngx_http_acme_main_conf_t, dns_ttl),
+      &ngx_acme_dns_ttl_post },
 
       ngx_null_command
 };
@@ -4341,7 +4353,7 @@ ngx_http_acme_dns_handler(ngx_connection_t *c)
     amcf = ngx_http_acme_get_main_conf();
 
     if (n > 0) {
-        b = ngx_http_acme_create_dns_response(c, n);
+        b = ngx_http_acme_create_dns_response(c, n, amcf->dns_ttl);
 
     } else if (n == NGX_DECLINED && amcf->default_dns_handler == NULL) {
         b = ngx_http_acme_create_dns_error_response(c);
@@ -4428,8 +4440,10 @@ ngx_http_acme_parse_dns_request(ngx_connection_t *c, char **err)
 
     rc = NGX_ERROR;
 
-    if (end - p <= 12 || ntohs(*(u_short*)&p[4]) != 1
-        || ntohs(*(u_short*)&p[6]) != 0 || ntohs(*(u_short*)&p[8]) != 0)
+    if (end - p <= 12
+        || p[4] != 0 || p[5] != 1 /* QDCOUNT */
+        || p[6] != 0 || p[7] != 0 /* ANCOUNT */
+        || p[8] != 0 || p[9] != 0 /* NSCOUNT */)
     {
         *err = "malformed query";
         goto failed;
@@ -4461,14 +4475,14 @@ ngx_http_acme_parse_dns_request(ngx_connection_t *c, char **err)
 
     rc = NGX_DECLINED;
 
-    if (ntohs(*(u_short*)p) != 16) {
+    if (p[0] != 0 || p[1] != 16) {
         *err = "not a TXT record";
         goto failed;
     }
 
     p += 2;
 
-    if (ntohs(*(u_short*)p) != 1) {
+    if (p[0] != 0 || p[1] != 1) {
         *err = "not an IN class";
         goto failed;
     }
@@ -4486,10 +4500,12 @@ failed:
 
 
 static ngx_buf_t *
-ngx_http_acme_create_dns_response(ngx_connection_t *c, size_t quest_size)
+ngx_http_acme_create_dns_response(ngx_connection_t *c, size_t quest_size,
+    uint32_t ttl)
 {
     size_t      size;
     u_char     *p;
+    uint16_t    sv;
     ngx_buf_t  *b;
     ngx_str_t   key_auth;
 
@@ -4513,7 +4529,8 @@ ngx_http_acme_create_dns_response(ngx_connection_t *c, size_t quest_size)
     /* RCODE = No error */
     p[3] = 0;
     /* ANCOUNT */
-    *(u_short*)&p[6] = htons(1);
+    p[6] = 0;
+    p[7] = 1;
 
     p += quest_size;
 
@@ -4522,24 +4539,23 @@ ngx_http_acme_create_dns_response(ngx_connection_t *c, size_t quest_size)
     *p++ = 0x0c;
 
     /* TXT */
-    *(u_short*)p = htons(16);
-
-    p += 2;
+    *p++ = 0;
+    *p++ = 16;
 
     /* IN */
-    *(u_short*)p = htons(1);
-
-    p += 2;
+    *p++ = 0;
+    *p++ = 1;
 
     /* TTL */
-    *(uint32_t*)p = htonl(1);
-
-    p += 4;
+    *p++ = (u_char) (ttl >> 24);
+    *p++ = (u_char) (ttl >> 16);
+    *p++ = (u_char) (ttl >> 8);
+    *p++ = (u_char) ttl;
 
     /* RDLENGTH */
-    *(u_short*)p = htons(key_auth.len + 1);
-
-    p += 2;
+    sv = key_auth.len + 1;
+    *p++ = (u_char) (sv >> 8);
+    *p++ = (u_char) sv;
 
     /* character-string length */
     *p++ = key_auth.len;
@@ -4583,6 +4599,19 @@ ngx_http_acme_create_dns_error_response(ngx_connection_t *c)
     p[3] = 0;
 
     return b;
+}
+
+
+static char *
+ngx_acme_dns_ttl_check(ngx_conf_t *cf, void *post, void *data)
+{
+    ngx_uint_t  *np = data;
+
+    if (*np > NGX_MAX_INT32_VALUE) {
+        return "value is out of range";
+    }
+
+    return NGX_CONF_OK;
 }
 
 
@@ -5907,6 +5936,7 @@ ngx_http_acme_create_main_conf(ngx_conf_t *cf)
     ngx_memcpy(&amcf->log, cf->log, sizeof(ngx_log_t));
     amcf->max_key_auth_size = NGX_CONF_UNSET_SIZE;
     amcf->max_response_size = NGX_CONF_UNSET_SIZE;
+    amcf->dns_ttl = NGX_CONF_UNSET_UINT;
 
     return amcf;
 }
@@ -5927,6 +5957,7 @@ ngx_http_acme_init_main_conf(ngx_conf_t *cf, void *conf)
 
     ngx_conf_init_size_value(amcf->max_key_auth_size, 2 * 1024);
     ngx_conf_init_size_value(amcf->max_response_size, 32 * 1024);
+    ngx_conf_init_uint_value(amcf->dns_ttl, 1);
 
     return NGX_CONF_OK;
 }
