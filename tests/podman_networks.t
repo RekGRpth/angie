@@ -2,7 +2,7 @@
 
 # (C) 2026 Web Server LLC
 
-# Tests for updating http upstreams via Podman labels.
+# Tests for Docker networks.
 
 ###############################################################################
 
@@ -17,7 +17,7 @@ use lib 'lib';
 use Test::Docker;
 use Test::Nginx;
 
-require '../tests/docker.t';
+require '../tests/docker_networks.t';
 
 ###############################################################################
 
@@ -27,23 +27,32 @@ select STDOUT; $| = 1;
 plan(skip_all => 'unsafe, may interfere with running containers.')
 	unless $ENV{TEST_ANGIE_UNSAFE};
 
-my $t = Test::Nginx->new()
-	->has(qw/http http_api upstream_zone docker upstream_sticky proxy/)
-	->has(qw/stream stream_upstream_zone stream_upstream_sticky/);
+my $t = Test::Nginx->new()->has(qw/http http_api upstream_zone docker proxy/);
 
-my $docker_helper = eval {
+my $docker_helper_multi = eval {
 	Test::Docker->new({
 		container_engine => 'podman',
-		networks => ['angie_test_network']
+		networks => ['angie_net1', 'angie_net2', 'angie_net3']
 	});
 };
 if ($@) {
 	plan(skip_all => $@);
 }
 
-$t->write_file_expand('nginx.conf', prepare_config($docker_helper));
+my $docker_helper_single = eval {
+	Test::Docker->new({
+		container_engine => 'podman',
+		networks => ['angie_single_net']
+	});
+};
+if ($@) {
+	plan(skip_all => $@);
+}
 
-my %test_cases = prepare_test_cases($docker_helper);
+$t->write_file_expand('nginx.conf', prepare_config($docker_helper_multi));
+
+my %test_cases = prepare_test_cases(
+	$docker_helper_multi, $docker_helper_single);
 
 $t->plan(scalar keys %test_cases);
 
