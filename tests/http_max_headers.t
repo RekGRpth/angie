@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
+# (C) Sergey Kandaurov
+# (C) Nginx, Inc.
 # (C) Maxim Dounin
 
 # Tests for max_headers directive.
@@ -22,7 +25,7 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http rewrite/);
+my $t = Test::Nginx->new()->has(qw/http/);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -42,21 +45,21 @@ http {
 
         max_headers 5;
 
-        location / {
-            return 204;
-        }
+        location / { }
     }
 }
 
 EOF
 
-$t->try_run('no max_headers')->plan(3);
+$t->write_file('index.html', '');
+$t->plan(3)->run();
 
 ###############################################################################
 
-like(get('/'), qr/ 204/, 'two headers');
-like(get('/', ('Foo: bar') x 3), qr/ 204/, 'five headers');
-like(get('/', ('Foo: bar') x 4), qr/ 400/, 'six headers rejected');
+like(get('/'), qr/200 OK/, 'two headers');
+like(get('/', ('Foo: bar') x 3), qr/200 OK/, 'five headers');
+like(get('/', ('Foo: bar') x 4), qr/400 Bad/,
+	'six headers rejected - max headers reached');
 
 ###############################################################################
 

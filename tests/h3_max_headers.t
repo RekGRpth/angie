@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 
+# (C) Sergey Kandaurov
+# (C) Nginx, Inc.
 # (C) 2025 Web Server LLC
 # (C) Maxim Dounin
 
@@ -11,7 +13,6 @@ use warnings;
 use strict;
 
 use Test::More;
-use Socket qw/ CRLF /;
 
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
@@ -24,7 +25,7 @@ use Test::Nginx::HTTP3;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http http_v3 rewrite cryptx/)
+my $t = Test::Nginx->new()->has(qw/http http_v3 cryptx/)
 	->has_daemon('openssl');
 
 $t->write_file_expand('nginx.conf', <<'EOF');
@@ -48,9 +49,7 @@ http {
 
         max_headers 5;
 
-        location / {
-            return 204;
-        }
+        location / { }
     }
 }
 
@@ -74,13 +73,15 @@ foreach my $name ('localhost') {
 		or die "Can't create certificate for $name: $!\n";
 }
 
-$t->try_run('no max_headers')->plan(3);
+$t->write_file('index.html', '');
+$t->plan(3)->run();
 
 ###############################################################################
 
-like(get('/'), qr/ 204/, 'two headers');
-like(get('/', ('Foo: bar') x 3), qr/ 204/, 'five headers');
-like(get('/', ('Foo: bar') x 4), qr/ 400/, 'six headers rejected');
+is(get('/', ('Foo: bar') x 2), '200', 'two headers');
+is(get('/', ('Foo: bar') x 5), '200', 'five headers');
+is(get('/', ('Foo: bar') x 6), '400',
+	'six headers rejected - max headers reached');
 
 ###############################################################################
 
@@ -94,8 +95,6 @@ sub get {
 			{ name => ':scheme', value => 'http' },
 			{ name => ':path', value => $url },
 			{ name => ':authority', value => 'localhost' },
-			{ name => 'foo', value => 'bar' },
-			{ name => 'foo', value => 'bar' },
 			map {
 				my ($n, $v) = split /:/;
 				{ name => lc $n, value => $v };
@@ -106,9 +105,7 @@ sub get {
 	my $frames = $s->read(all => [{ sid => $sid, fin => 1 }]);
 
 	my ($frame) = grep { $_->{type} eq "HEADERS" } @$frames;
-
-	return join("\n", map { "$_: " . $frame->{headers}->{$_}; }
-		keys %{$frame->{headers}});
+	return $frame->{headers}->{':status'};
 }
 
 ###############################################################################
