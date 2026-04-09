@@ -1849,7 +1849,8 @@ ngx_http_acme_csr_gen(ngx_http_acme_session_t *ses, ngx_acme_privkey_t *key,
     }
 
     if (!X509_REQ_set_pubkey(crq, key->key)) {
-        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0, "X509_REQ_set_pubkey() failed");
+        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
+                      "X509_REQ_set_pubkey() failed");
         goto failed;
     }
 
@@ -2063,7 +2064,8 @@ ngx_http_acme_sha256(ngx_http_acme_session_t *ses,
     }
 
     if (!EVP_DigestFinal_ex(emc, hash, &size)) {
-        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0, "EVP_DigestFinal_ex() failed");
+        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
+                      "EVP_DigestFinal_ex() failed");
         goto failed;
     }
 
@@ -4341,6 +4343,7 @@ ngx_http_acme_dns_handler(ngx_connection_t *c)
     char                       *err;
     ssize_t                     n;
     ngx_buf_t                  *b;
+    ngx_chain_t                 cl, *out;
     ngx_http_acme_main_conf_t  *amcf;
 
     n = ngx_http_acme_parse_dns_request(c, &err);
@@ -4365,20 +4368,29 @@ ngx_http_acme_dns_handler(ngx_connection_t *c)
         b = NULL;
     }
 
-    if (b != NULL) {
-        if (c->send(c, b->start, b->end - b->start) == NGX_AGAIN
-            && ngx_handle_write_event(c->write, 0) == NGX_OK)
-        {
-            c->buffer = b;
-
-            c->read->handler = ngx_http_acme_empty_handler;
-            c->write->handler = ngx_http_acme_dns_resend;
-
-            ngx_add_timer(c->write, 5000);
-
-            return;
-        }
+    if (b == NULL) {
+        goto done;
     }
+
+    cl.buf = b;
+    cl.next = NULL;
+
+    out = c->send_chain(c, &cl, 0);
+
+    if (out && out != NGX_CHAIN_ERROR
+        && ngx_handle_write_event(c->write, 0) == NGX_OK)
+    {
+        c->buffer = b;
+
+        c->read->handler = ngx_http_acme_empty_handler;
+        c->write->handler = ngx_http_acme_dns_resend;
+
+        ngx_add_timer(c->write, 5000);
+
+        return;
+    }
+
+done:
 
     ngx_http_acme_dns_close(c);
 }
@@ -4394,14 +4406,22 @@ ngx_http_acme_empty_handler(ngx_event_t *ev)
 static void
 ngx_http_acme_dns_resend(ngx_event_t *wev)
 {
+    ngx_err_t          err;
     ngx_buf_t         *b;
+    ngx_chain_t        cl, *out;
     ngx_connection_t  *c;
 
     c = wev->data;
     b = c->buffer;
 
-    if (c->send(c, b->start, b->end - b->start) == NGX_AGAIN) {
-        ngx_log_error(NGX_LOG_ALERT, c->log, NGX_EAGAIN,
+    cl.buf = b;
+    cl.next = NULL;
+
+    out = c->send_chain(c, &cl, 0);
+
+    if (out != NULL) {
+        err = (out == NGX_CHAIN_ERROR) ? 0 : NGX_EAGAIN;
+        ngx_log_error(NGX_LOG_ALERT, c->log, err,
                       "failed to send acme dns-01 challenge reply");
     }
 
@@ -4518,6 +4538,9 @@ ngx_http_acme_create_dns_response(ngx_connection_t *c, size_t quest_size,
         return NULL;
     }
 
+    b->last = b->end;
+    b->flush = 1;
+
     p = b->start;
 
     ngx_memcpy(p, c->buffer->start, quest_size);
@@ -4586,6 +4609,9 @@ ngx_http_acme_create_dns_error_response(ngx_connection_t *c)
     if (b == NULL) {
         return NULL;
     }
+
+    b->last = b->end;
+    b->flush = 1;
 
     p = b->start;
 
@@ -7475,7 +7501,8 @@ ngx_api_acme_iter(ngx_api_iter_ctx_t *ictx, ngx_api_ctx_t *actx)
     } else {
         ngx_rwlock_rlock(&(*cli_p)->sh_cert->lock);
 
-        ngx_memcpy(sh, &(*cli_p)->sh_cert->cli, sizeof(ngx_api_acme_sh_client_t));
+        ngx_memcpy(sh, &(*cli_p)->sh_cert->cli,
+                   sizeof(ngx_api_acme_sh_client_t));
 
         ngx_rwlock_unlock(&(*cli_p)->sh_cert->lock);
     }
