@@ -2330,6 +2330,7 @@ ngx_http_upstream_reinit(ngx_http_request_t *r, ngx_http_upstream_t *u)
         return NGX_ERROR;
     }
 
+    u->early_hints_length = 0;
     u->keepalive = 0;
     u->upgrade = 0;
     u->error = 0;
@@ -2896,6 +2897,8 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
 
         u->response_received = 1;
 
+again:
+
         rc = u->process_header(r);
 
         if (rc == NGX_AGAIN) {
@@ -2916,11 +2919,7 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
             rc = ngx_http_upstream_process_early_hints(r, u);
 
             if (rc == NGX_OK) {
-                rc = u->process_header(r);
-
-                if (rc == NGX_AGAIN) {
-                    continue;
-                }
+                goto again;
             }
         }
 
@@ -7155,10 +7154,17 @@ ngx_http_upstream_server(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
 #if (NGX_HTTP_UPSTREAM_SID)
 
-        if (ngx_strncmp(value[i].data, "sid=", 4) == 0) {
+        if (ngx_strncmp(value[i].data, "sid=", 4) == 0
+            || ngx_strncmp(value[i].data, "route=", 6) == 0)
+        {
+            if (value[i].data[0] == 's') {
+                value[i].len -= 4;
+                value[i].data += 4;
 
-            value[i].len -= 4;
-            value[i].data += 4;
+            } else {
+                value[i].len -= 6;
+                value[i].data += 6;
+            }
 
             if (value[i].len == 0) {
                 goto invalid;
