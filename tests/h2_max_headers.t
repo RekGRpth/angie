@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
+# (C) Sergey Kandaurov
+# (C) Nginx, Inc.
 # (C) Maxim Dounin
 
 # Tests for max_headers directive, HTTP/2.
@@ -10,7 +13,6 @@ use warnings;
 use strict;
 
 use Test::More;
-use Socket qw/ CRLF /;
 
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
@@ -23,7 +25,7 @@ use Test::Nginx::HTTP2;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http http_v2 rewrite/);
+my $t = Test::Nginx->new()->has(qw/http http_v2/);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -44,21 +46,21 @@ http {
         http2 on;
         max_headers 5;
 
-        location / {
-            return 204;
-        }
+        location / { }
     }
 }
 
 EOF
 
-$t->try_run('no max_headers')->plan(3);
+$t->write_file('index.html', '');
+$t->plan(3)->run();
 
 ###############################################################################
 
-like(get('/'), qr/ 204/, 'two headers');
-like(get('/', ('Foo: bar') x 3), qr/ 204/, 'five headers');
-like(get('/', ('Foo: bar') x 4), qr/ 400/, 'six headers rejected');
+is(get('/', ('Foo: bar') x 2), '200', 'two headers');
+is(get('/', ('Foo: bar') x 5), '200', 'five headers');
+is(get('/', ('Foo: bar') x 6), '400',
+	'six headers rejected - max headers reached');
 
 ###############################################################################
 
@@ -72,8 +74,6 @@ sub get {
 			{ name => ':scheme', value => 'http' },
 			{ name => ':path', value => $url },
 			{ name => ':authority', value => 'localhost' },
-			{ name => 'foo', value => 'bar', mode => 2 },
-			{ name => 'foo', value => 'bar', mode => 2 },
 			map {
 				my ($n, $v) = split /:/;
 				{ name => lc $n, value => $v, mode => 2 };
@@ -84,9 +84,7 @@ sub get {
 	my $frames = $s->read(all => [{ sid => $sid, fin => 1 }]);
 
 	my ($frame) = grep { $_->{type} eq "HEADERS" } @$frames;
-
-	return join("\n", map { "$_: " . $frame->{headers}->{$_}; }
-		keys %{$frame->{headers}});
+	return $frame->{headers}->{':status'};
 }
 
 ###############################################################################

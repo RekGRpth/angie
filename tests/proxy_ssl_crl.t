@@ -3,7 +3,7 @@
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
-# Tests for http ssl module, ssl_crl directive.
+# Tests for proxy to ssl backend, backend certificate verification with CRL.
 
 ###############################################################################
 
@@ -22,7 +22,7 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http http_ssl socket_ssl/)
+my $t = Test::Nginx->new()->has(qw/http http_ssl proxy/)
 	->has_daemon('openssl')->plan(5);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
@@ -37,52 +37,64 @@ events {
 http {
     %%TEST_GLOBALS_HTTP%%
 
-    ssl_certificate_key  localhost.key;
-    ssl_certificate localhost.crt;
-
-    ssl_verify_client on;
-    ssl_client_certificate int-root.crt;
-
-    add_header X-Verify $ssl_client_verify always;
+    proxy_ssl_verify on;
+    proxy_ssl_trusted_certificate int-root.crt;
+    proxy_ssl_session_reuse off;
 
     server {
-        listen       127.0.0.1:8080 ssl;
+        listen       127.0.0.1:8080;
         server_name  localhost;
 
-        ssl_client_certificate root.crt;
-        ssl_crl empty.crl;
+        location /1 {
+            proxy_pass https://127.0.0.1:8081/;
+            proxy_ssl_trusted_certificate root.crt;
+            proxy_ssl_name int;
+            proxy_ssl_crl empty.crl;
+        }
+
+        location /2 {
+            proxy_pass https://127.0.0.1:8081/;
+            proxy_ssl_trusted_certificate root.crt;
+            proxy_ssl_name int;
+            proxy_ssl_crl root.crl;
+        }
+
+        location /3 {
+            proxy_pass https://127.0.0.1:8082/;
+            proxy_ssl_verify_depth 2;
+            proxy_ssl_name end;
+            proxy_ssl_crl root.crl;
+        }
+
+        location /4 {
+            proxy_pass https://127.0.0.1:8082/;
+            proxy_ssl_verify_depth 2;
+            proxy_ssl_name end;
+            proxy_ssl_crl empty.crl;
+        }
+
+        location /5 {
+            proxy_pass https://127.0.0.1:8082/;
+            proxy_ssl_verify_depth 2;
+            proxy_ssl_name end;
+            proxy_ssl_crl empty-chain.crl;
+        }
     }
 
     server {
         listen       127.0.0.1:8081 ssl;
         server_name  localhost;
 
-        ssl_client_certificate root.crt;
-        ssl_crl root.crl;
+        ssl_certificate int.crt;
+        ssl_certificate_key int.key;
     }
 
     server {
         listen       127.0.0.1:8082 ssl;
         server_name  localhost;
 
-        ssl_verify_depth 2;
-        ssl_crl root.crl;
-    }
-
-    server {
-        listen       127.0.0.1:8083 ssl;
-        server_name  localhost;
-
-        ssl_verify_depth 2;
-        ssl_crl empty.crl;
-    }
-
-    server {
-        listen       127.0.0.1:8084 ssl;
-        server_name  localhost;
-
-        ssl_verify_depth 2;
-        ssl_crl empty-chain.crl;
+        ssl_certificate end.crt;
+        ssl_certificate_key end.key;
     }
 }
 
@@ -122,7 +134,7 @@ basicConstraints = critical,CA:TRUE
 keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 EOF
 
-foreach my $name ('root', 'localhost') {
+foreach my $name ('root') {
 	system('openssl req -x509 -new '
 		. "-config $d/openssl.conf -subj /CN=$name/ "
 		. "-out $d/$name.crt -keyout $d/$name.key "
@@ -182,31 +194,18 @@ system("openssl ca -gencrl -config $d/ca.conf "
 $t->write_file('int-root.crt',
 	$t->read_file('int.crt') . $t->read_file('root.crt'));
 
-$t->write_file('t', '');
+$t->write_file('index.html', '');
 $t->run();
 
 ###############################################################################
 
-like(get(8080, 'int'), qr/SUCCESS/, 'crl - no revoked certs');
-like(get(8081, 'int'), qr/FAILED:certificate revoked/, 'crl - client revoked');
-like(get(8082, 'end'), qr/FAILED:certificate revoked/, 'crl - CA revoked');
+like(http_get('/1'), qr/200/, 'proxy crl - no revoked certs');
+like(http_get('/2'), qr/502 Bad/, 'proxy crl - client revoked');
+like(http_get('/3'), qr/502 Bad/, 'proxy crl - CA revoked');
 
 # intermediate CAs, incomplete chain
 
-like(get(8083, 'end'), qr/FAILED:unable to get certificate CRL/,
-	'crl - incomplete chain');
-like(get(8084, 'end'), qr/SUCCESS/, 'crl - no revoked chain');
-
-###############################################################################
-
-sub get {
-	my ($port, $cert) = @_;
-	http_get(
-		'/t', PeerAddr => '127.0.0.1:' . port($port),
-		SSL => 1,
-		SSL_cert_file => "$d/$cert.crt",
-		SSL_key_file => "$d/$cert.key"
-	);
-}
+like(http_get('/4'), qr/502 Bad/, 'proxy crl - incomplete chain');
+like(http_get('/5'), qr/200/, 'proxy crl - no revoked chain');
 
 ###############################################################################
