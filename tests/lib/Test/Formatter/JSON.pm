@@ -19,7 +19,7 @@ use File::Spec::Functions qw(catdir);
 use Test::Formatter::TestSession;
 use TAP::Formatter::Console;
 use TAP::Formatter::File;
-use POSIX 'strftime';
+use POSIX qw/ strftime strerror :sys_wait_h /;
 use JSON;
 
 use base qw(TAP::Base);
@@ -162,6 +162,26 @@ sub _output {
 }
 
 
+sub wait_info {
+	my ($status) = @_;
+
+	if (WIFEXITED($status)) {
+		my $code = WEXITSTATUS($status);
+		return "normally with code $code";
+
+	} elsif (WIFSIGNALED($status)) {
+		my $signal = WTERMSIG($status);
+		return "terminated by signal $signal";
+
+	} elsif (WIFSTOPPED($status)) {
+		return "stopped";
+
+	} else {
+		return "unknown";
+	}
+}
+
+
 sub create_report {
 	my ($r, $verbosity) = @_;
 
@@ -219,6 +239,10 @@ sub create_report {
 
 		$tres{exit_status} = $test->{exit};
 		$tres{wait_status} = $test->{wait};
+		if ($tres{exit_status}) {
+			$tres{exit_info} = strerror($tres{exit_status});
+		}
+		$tres{wait_info} = wait_info($test->{wait});
 		$tres{status} = $test->{test_status};
 		$tres{todo_passed} = $test->{todo_passed};
 		$tres{problems} = $test->{has_problems};
