@@ -38,6 +38,11 @@ plan(skip_all => 'unsafe njs build')
 	# but this works
 	if $t->has_module('-fsanitize=cfi');
 
+# To test certificate issuance "at full speed" with no artificial sleeps
+# between individual challenge validation attempts.
+# To restore Pebble's default sleep behavior, set PEBBLE_VA_NOSLEEP to 0.
+$ENV{PEBBLE_VA_NOSLEEP} //= 1;
+
 my $has_alpn = !$t->has_module('BoringSSL|AWS-LC|LibreSSL');
 
 # XXX
