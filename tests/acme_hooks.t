@@ -30,6 +30,11 @@ select STDOUT; $| = 1;
 eval { require FCGI; };
 plan(skip_all => 'FCGI not installed') if $@;
 
+# To test certificate issuance "at full speed" with no artificial sleeps
+# between individual challenge validation attempts.
+# To restore Pebble's default sleep behavior, set PEBBLE_VA_NOSLEEP to 0.
+$ENV{PEBBLE_VA_NOSLEEP} //= 1;
+
 my $t = Test::Nginx->new()->has(qw/acme http_ssl socket_ssl/)
 	->has_daemon('openssl');
 
