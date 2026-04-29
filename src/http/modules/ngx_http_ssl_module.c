@@ -489,7 +489,7 @@ static ngx_str_t ngx_http_ssl_sess_id_ctx = ngx_string("HTTP");
 #if (NGX_API)
 
 typedef struct {
-    X509_NAME               *name;
+    const X509_NAME         *name;
     STACK_OF(GENERAL_NAME)  *alt_names;
 } ngx_api_http_ssl_dn_ctx_t;
 
@@ -517,7 +517,7 @@ static ngx_int_t ngx_api_http_ssl_state_or_province_handler(ngx_api_entry_data_t
 static ngx_int_t ngx_api_http_ssl_organization_handler(ngx_api_entry_data_t data,
     ngx_api_ctx_t *actx, void *ctx);
 static ngx_int_t ngx_api_http_ssl_dn_handler(ngx_api_entry_data_t data,
-    ngx_api_ctx_t *actx, X509_NAME *name, int nid);
+    ngx_api_ctx_t *actx, const X509_NAME *name, int nid);
 static ngx_int_t ngx_api_http_ssl_since_handler(ngx_api_entry_data_t data,
     ngx_api_ctx_t *actx, void *ctx);
 static ngx_int_t ngx_api_http_ssl_until_handler(ngx_api_entry_data_t data,
@@ -2170,7 +2170,7 @@ ngx_api_http_ssl_organization_handler(ngx_api_entry_data_t data,
 
 static ngx_int_t
 ngx_api_http_ssl_dn_handler(ngx_api_entry_data_t data, ngx_api_ctx_t *actx,
-    X509_NAME *name, int nid)
+    const X509_NAME *name, int nid)
 {
     int        len;
     ngx_str_t  s;
@@ -2180,7 +2180,11 @@ ngx_api_http_ssl_dn_handler(ngx_api_entry_data_t data, ngx_api_ctx_t *actx,
         return NGX_DECLINED;
     }
 
+#if (OPENSSL_VERSION_NUMBER < 0x40000000L)
+    len = X509_NAME_get_text_by_NID((X509_NAME *) name, nid, (char *) buf, sizeof(buf));
+#else
     len = X509_NAME_get_text_by_NID(name, nid, (char *) buf, sizeof(buf));
+#endif
 
     if (len < 0) {
         return NGX_DECLINED;
