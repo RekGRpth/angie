@@ -7,6 +7,17 @@
 
 <changes ver="1.12.0" date="">
 
+<change type="feature">
+<para lang="ru">
+улучшена совместимость с ACME-серверами, не полностью соответствующими
+спецификации протокола, в частности с SSL.com.
+</para>
+<para lang="en">
+enhanced compatibility with servers that do not strictly comply with
+the ACME protocol, particularly SSL.com.
+</para>
+</change>
+
 <change type="bugfix">
 <para lang="ru">
 быстрое завершение Docker-контейнеров сразу после старта могло вызывать падение

@@ -497,7 +497,6 @@ static ngx_int_t ngx_data_object_vget_str(ngx_data_item_t *obj, ngx_str_t *s,
     va_list args);
 static ngx_int_t ngx_data_object_get_str(ngx_data_item_t *obj, ngx_str_t *s,
     ...);
-static int ngx_data_object_str_eq(ngx_data_item_t *obj, const char *value, ...);
 
 static ngx_int_t ngx_str_eq(ngx_str_t *s1, const char *s2);
 static ngx_int_t ngx_strcase_eq(ngx_str_t *s1, char *s2);
@@ -2782,17 +2781,33 @@ ngx_http_acme_server_error(ngx_http_acme_session_t *ses,
 
     json = NULL;
 
-    if (ses->json) {
-        if (ngx_http_acme_server_error_type(ses, NULL)) {
-            json = ses->json;
+    if (ses->json != NULL) {
+        /*
+         * If an error occurs, the ACME server should set the "Content-Type"
+         * header to "application/problem+json", as specified in RFC 7807 (see
+         * RFC 8555, Sec. 6.7, for details).  However, some servers don't
+         * comply, so we can't rely on this.  Instead, we look for and check
+         * the "type" field in the JSON response.
+         */
+        ngx_str_set(&s, "error");
 
-        } else {
-            ngx_str_set(&s, "error");
-            json = ngx_data_object_find(ses->json, &s);
+        json = ngx_data_object_find(ses->json, &s);
+
+        if (json == NULL) {
+            json = ses->json;
+        }
+
+        if (ngx_data_object_get_str(json, &s, "type", 0) != NGX_OK
+            || s.len < 27
+            || ngx_strncasecmp(s.data, (u_char *) "urn:ietf:params:acme:error:",
+                               27)
+               != 0)
+        {
+            json = NULL;
         }
     }
 
-    if (json) {
+    if (json != NULL) {
         if (ngx_data_object_get_str(json, &s, "detail", 0) != NGX_OK) {
             ngx_str_set(&s, "N/A");
         }
@@ -2808,19 +2823,12 @@ ngx_http_acme_server_error(ngx_http_acme_session_t *ses,
 static int
 ngx_http_acme_server_error_type(ngx_http_acme_session_t *ses, const char *type)
 {
-    int         ret;
-    ngx_str_t  *s;
+    ngx_str_t  s;
 
-    s = &ses->content_type;
-
-    ret = (s->len >= 24) && (ngx_strncasecmp(s->data,
-                               (u_char *) "application/problem+json", 24) == 0);
-
-    if (ret && type != NULL) {
-        ret = ngx_data_object_str_eq(ses->json, type, "type", 0);
-    }
-
-    return ret;
+    return (ses->json != NULL
+            && ngx_data_object_get_str(ses->json, &s, "type", 0) == NGX_OK
+            && s.len == ngx_strlen(type)
+            && ngx_strncmp(s.data, type, s.len) == 0);
 }
 
 
@@ -6003,23 +6011,6 @@ ngx_data_object_get_str(ngx_data_item_t *obj, ngx_str_t *s, ...)
 }
 
 
-static int
-ngx_data_object_str_eq(ngx_data_item_t *obj, const char *value, ...)
-{
-    va_list    args;
-    ngx_str_t  v;
-    ngx_int_t  rc;
-
-    va_start(args, value);
-    rc = ngx_data_object_vget_str(obj, &v, args);
-    va_end(args);
-
-    return rc == NGX_OK
-           && v.len == ngx_strlen(value)
-           && ngx_strncmp(v.data, value, v.len) == 0;
-}
-
-
 static ngx_int_t
 ngx_http_acme_extract_uri(ngx_str_t *url, ngx_str_t *uri)
 {
@@ -6597,7 +6588,12 @@ ngx_http_acme_client(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     ngx_str_set(&loc_name, "@acme");
 
-    ngx_str_set(&loc_conf, "proxy_pass $__acme_server;}");
+    /*
+     * Some ACME servers require SNI in requests, so we add
+     * "proxy_ssl_server_name on;"
+     */
+    ngx_str_set(&loc_conf, "proxy_pass $__acme_server; "
+                           "proxy_ssl_server_name on; }");
 
     amcf->ctx = ngx_http_client_create_location(cf, &loc_name, &loc_conf);
     if (amcf->ctx == NULL) {
