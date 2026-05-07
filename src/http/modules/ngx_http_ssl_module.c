@@ -2235,7 +2235,7 @@ ngx_api_http_ssl_time_info(ngx_api_entry_data_t data, ngx_api_ctx_t *actx,
     }
 
     if (ASN1_TIME_print(bio, asn1_time) == 1) {
-        s.len = BIO_get_mem_data(bio, &s.data);
+        s.len = BIO_get_mem_data(bio, (char **) &s.data);
 
         data.str = &s;
 
