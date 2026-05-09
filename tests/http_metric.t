@@ -44,6 +44,15 @@ http {
 
     variables_hash_bucket_size 128;
 
+    metric_zone reload_inline:128k count;
+
+    metric_complex_zone reload_complex:128k {
+        1 count;
+        2 average mean count=5 window=off;
+        3 histogram 1 2 3;
+        # 4 gauge;
+    }
+
     metric_zone counter:128k discard_key=angie count;
 
     metric_zone min:128k min;
@@ -62,6 +71,8 @@ http {
     metric_zone hist2:128k expire=off histogram inf 2 5 10 0.1 8;
 
     metric_zone var:128k count;
+    metric_zone var2:128k last;
+    metric_zone var3:128k last;
     metric_zone stage1:128k last;
     metric_zone stage2:128k last;
     metric_zone stage3:128k last;
@@ -144,6 +155,16 @@ http {
     server {
         listen 127.0.0.1:8080;
 
+        location ~ /reload/(.+)/(.+)$ {
+            metric reload_inline  $1=$2;
+            metric reload_complex $1=$2;
+        }
+
+        location ~ /key_value/(.+)$ {
+            set $metric_var $1;
+            return 200 "$metric_var;$metric_var_key;$metric_var_value";
+        }
+
         location ~ /var1/(.+)/(.+)$ {
             set $metric_var $1=$2;
             return 200 "$metric_var;$metric_var_key;$metric_var_value";
@@ -153,6 +174,26 @@ http {
             set $metric_var_key   $1;
             set $metric_var_value $2;
             return 200 "$metric_var;$metric_var_key;$metric_var_value";
+        }
+
+        location ~ /var3/(.+)/(.*)$ {
+            set $metric_var_key    $1;
+            set $metric_var_value  $2;
+
+            set $metric_var2_key   $1;
+            set $metric_var2_value $2;
+
+            set $metric_var   angie=1;
+            set $metric_var_value  $2;
+
+            set $metric_var_key    $1;
+
+            set $metric_var3_key   bar;
+            set $metric_var3_value 10$2;
+
+            return 200 "$metric_var:$metric_var_key=$metric_var_value
+$metric_var2:$metric_var2_key=$metric_var2_value
+$metric_var3:$metric_var3_key=$metric_var3_value";
         }
 
         location /stage/request1/ {
@@ -376,28 +417,163 @@ my %test_cases = (
 		);
 	},
 
+	'reload' => sub {
+		plan(skip_all => 'reload is not working (perl >= 5.32 required)')
+			unless $t->has_feature('reload');
+
+		ok($t->reload(), 'reload 1');
+
+		http_get('/reload/angie/1');
+		http_get('/reload/angie/2');
+
+		ok($t->reload(), 'reload 2');
+
+		my $new_conf = $t->read_file('nginx.conf');
+
+		$new_conf =~ s/reload_inline:128k/reload_inline:256k/;
+		$t->write_file('nginx.conf', $new_conf);
+		ok($t->reload(), 'reload metric zone size 1');
+
+		http_get('/reload/angie/1');
+
+		is(get_json('/api/reload_inline/metrics/angie/'), 1,
+			'reload metric zone size 2');
+
+		$new_conf =~ s/reload_inline:256k count/reload_inline:256k gauge/;
+		$t->write_file('nginx.conf', $new_conf);
+		ok($t->reload(), 'reload metric mode 1');
+
+		my $res = get_json('/api/reload_inline/metrics');
+
+		ok(!exists $res->{angie}, 'reload metric mode 2');
+
+		is(get_json('/api/reload_complex/metrics/angie/1/'), 3,
+			'reload metric mode 3');
+
+		http_get('/reload/angie/10');
+		http_get('/reload/angie/10');
+
+		$new_conf =~ s/# 4 gauge/4 gauge/;
+		$t->write_file('nginx.conf', $new_conf);
+		ok($t->reload(), 'reload metrics count 1');
+
+		$res = get_json('/api/reload_complex/metrics');
+
+		ok(!exists $res->{angie}, 'reload metrics count 2');
+
+		is(get_json('/api/reload_inline/metrics/angie/'), 20,
+			'reload metrics count 3');
+
+		http_get('/reload/angie/10');
+		http_get('/reload/angie/10');
+
+		$new_conf =~ s/count=5/count=9/;
+		$t->write_file('nginx.conf', $new_conf);
+		ok($t->reload(), 'reload average mean count 1');
+
+		$res = get_json('/api/reload_complex/metrics');
+
+		ok(!exists $res->{angie}, 'reload average mean count 2');
+
+		is(get_json('/api/reload_inline/metrics/angie/'), 40,
+			'reload average mean count 3');
+
+		http_get('/reload/angie/10');
+		http_get('/reload/angie/10');
+
+		$new_conf =~ s/window=off/window=99s/;
+		$t->write_file('nginx.conf', $new_conf);
+		ok($t->reload(), 'reload average mean window 1');
+
+		$res = get_json('/api/reload_complex/metrics');
+
+		ok(!exists $res->{angie}, 'reload average mean window 2');
+
+		is(get_json('/api/reload_inline/metrics/angie/'), 60,
+			'reload average mean window 3');
+
+		http_get('/reload/angie/10');
+		http_get('/reload/angie/10');
+
+		$new_conf =~ s/3 histogram 1 2 3/3 histogram 1 2 3 4 5/;
+		$t->write_file('nginx.conf', $new_conf);
+		ok($t->reload(), 'reload histogram 1');
+
+		$res = get_json('/api/reload_complex/metrics');
+
+		ok(!exists $res->{angie}, 'reload histogram 2');
+
+		is(get_json('/api/reload_inline/metrics/angie/'), 80,
+			'reload histogram 3');
+
+		SKIP: {
+
+		skip "no --with-debug", 6 unless $t->has_module('debug');
+
+		$t->stop();
+
+		my $log = $t->read_file('error.log');
+
+		like($log, qr/zone "\w+" uses the "\d+" size/, 'reload debug 1');
+		like($log, qr/zone "\w+" uses the "\w+" mode/, 'reload debug 2');
+		like($log, qr/zone "\w+" uses the "\d+" metrics/, 'reload debug 3');
+		like($log, qr/zone "\w+" uses the "count=\d+"/, 'reload debug 4');
+		like($log, qr/the "window=" parameter of metric/, 'reload debug 5');
+		like($log, qr/uses the "\d+" buckets/, 'reload debug 6');
+
+		$t->run();
+
+		}
+	},
+
+	'key value' => sub {
+		like(http_get("/key_value/key==1"),    qr/^key==1;key=;1$/m,
+			'key value 1');
+		like(http_get("/key_value/key==10"),   qr/^key==2;key=;2$/m,
+			'key value 2');
+		like(http_get("/key_value/k=e=y==1"),  qr/^k=e=y==1;k=e=y=;1$/m,
+			'key value 3');
+		like(http_get("/key_value/=k=e=y==1"), qr/^=k=e=y==1;=k=e=y=;1$/m,
+			'key value 4');
+		like(http_get("/key_value/==1"), qr/^==1;=;1$/m,
+			'key value 5');
+		like(http_get("/key_value/=1"),  qr/^;;$/m, 'key value 6');
+		like(http_get("/key_value/="),   qr/^;;$/m, 'key value 7');
+		like(http_get("/key_value/key"), qr/^key=1;key;1$/m, 'key value 8');
+	},
+
 	'variables' => sub {
-		like(http_get("/var1/angie/tt"),  qr/^angie=tt;angie;1$/m,
+		like(http_get("/var1/angie/tt"),  qr/^angie=1;angie;1$/m,
 			'variables 1 - 1');
-		like(http_get("/var1/angie/-1"),  qr/^angie=-1;angie;2$/m,
+		like(http_get("/var1/angie/-1"),  qr/^angie=2;angie;2$/m,
 			'variables 1 - 2');
-		like(http_get("/var1/angie/0.1"), qr/^angie=0\.1;angie;3$/m,
+		like(http_get("/var1/angie/0.1"), qr/^angie=3;angie;3$/m,
 			'variables 1 - 3');
-		like(http_get("/var1/foo/11"),    qr/^foo=11;foo;1$/m,
+		like(http_get("/var1/foo/11"),    qr/^foo=1;foo;1$/m,
 			'variables 1 - 4');
-		like(http_get("/var1/foo/0"),     qr/^foo=0;foo;2$/m,
+		like(http_get("/var1/foo/0"),     qr/^foo=2;foo;2$/m,
 			'variables 1 - 5');
 
-		like(http_get("/var2/angie/tt"),  qr/^angie=tt;angie;4$/m,
+		like(http_get("/var2/angie/tt"),  qr/^angie=4;angie;4$/m,
 			'variables 2 - 1');
-		like(http_get("/var2/angie/-1"),  qr/^angie=-1;angie;5$/m,
+		like(http_get("/var2/angie/-1"),  qr/^angie=5;angie;5$/m,
 			'variables 2 - 2');
-		like(http_get("/var2/angie/0.1"), qr/^angie=0\.1;angie;6$/m,
+		like(http_get("/var2/angie/0.1"), qr/^angie=6;angie;6$/m,
 			'variables 2 - 3');
-		like(http_get("/var2/foo/11"),    qr/^foo=11;foo;3$/m,
+		like(http_get("/var2/foo/11"),    qr/^foo=3;foo;3$/m,
 			'variables 2 - 4');
-		like(http_get("/var2/foo/0"),     qr/^foo=0;foo;4$/m,
+		like(http_get("/var2/foo/0"),     qr/^foo=4;foo;4$/m,
 			'variables 2 - 5');
+
+		like(http_get("/var3/foo/1"),
+			qr/^foo=5:foo=5\nfoo=1:foo=1\nbar=101:bar=101$/m,
+			'variables 3 - 1');
+		like(http_get("/var3/foo/2"),
+			qr/^foo=6:foo=6\nfoo=2:foo=2\nbar=102:bar=102$/m,
+			'variables 3 - 2');
+		like(http_get("/var3/foo/3"),
+			qr/^foo=7:foo=7\nfoo=3:foo=3\nbar=103:bar=103$/m,
+			'variables 3 - 3');
 	},
 
 	'stage' => sub {

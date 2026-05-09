@@ -7,6 +7,56 @@
 
 <changes ver="1.12.0" date="">
 
+<change type="bugfix">
+<para lang="ru">
+переменная "$metric_*" возвращала заданную строку, а не ключ вместе с
+подсчитанным значением метрики, из-за чего для получения значения приходилось
+использовать переменную "$metric_*_value".
+</para>
+<para lang="en">
+the "$metric_*" variable returned the specified string, not the key
+along with the calculated metric value. The "$metric_*_value" variable had
+to be used in order to get the actual value.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+если в рамках одного запроса последовательно задавались переменные
+"$metric_*" или "$metric_*_key" для нескольких зон метрик, то обновление
+статистики или получение связанных переменных происходило по ключу
+последней указанной зоны.
+</para>
+<para lang="en">
+if "$metric_*" or "$metric_*_key" variables were set sequentially for
+multiple metric zones within a single request, updating statistics or
+retrieving related variables used the key of the last specified zone.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+изменения режимов метрик и их параметров в директивах "metric_zone"
+и "metric_complex_zone" могли привести к падению рабочего процесса
+при перезагрузке конфигурации.
+</para>
+<para lang="en">
+alterations to the metric modes and their parameters in the "metric_zone"
+and "metric_complex_zone" directives could crash a worker process
+if the configuration is reloaded.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при использовании нескольких символов '=' в директиве "metric" обрезался ключ.
+</para>
+<para lang="en">
+when using multiple '=' characters in the "metric" directive,
+the key was truncated.
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 улучшена совместимость с ACME-серверами, не полностью соответствующими

@@ -137,20 +137,31 @@ typedef struct {
 } ngx_http_metric_iter_ctx_t;
 
 
+typedef struct {
+    ngx_str_t                    key;
+    ngx_http_metric_ctx_t       *mctx;
+} ngx_http_metric_var_ctx_t;
+
+
+typedef struct {
+    ngx_uint_t                   mctx_idx;
+    ngx_http_metric_t           *metric;
+} ngx_http_metric_var_data_t;
+
+
 #define NGX_HTTP_METRIC_STAGE_REQUEST   0
 #define NGX_HTTP_METRIC_STAGE_RESPONSE  1
 #define NGX_HTTP_METRIC_STAGE_END       2
 
 
 typedef struct {
-    ngx_str_t                    key;
-    ngx_str_t                    tmp;
     ngx_uint_t                   stage;
-    ngx_http_metric_ctx_t       *mctx;
+    ngx_http_metric_var_ctx_t  **vctx;
 } ngx_http_metric_request_ctx_t;
 
 
 typedef struct {
+    ngx_uint_t                   count;
     ngx_http_metric_ctx_t       *mctx;
     ngx_http_metric_ctx_t      **next;
 } ngx_http_metric_main_conf_t;
@@ -235,8 +246,8 @@ static ngx_int_t ngx_http_metric_var_get_value_handler(ngx_http_request_t *r,
 static ngx_int_t ngx_http_metric_complex_var_get_value_handler(
     ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 
-static ngx_http_metric_request_ctx_t *ngx_http_metric_get_var_ctx(
-    ngx_http_request_t *r);
+static ngx_http_metric_var_ctx_t *ngx_http_metric_get_var_ctx(
+    ngx_http_request_t *r, ngx_uint_t mctx_idx);
 static ngx_http_metric_request_ctx_t *ngx_http_metric_get_request_ctx(
     ngx_http_request_t *r);
 static void ngx_http_metric_request_cleanup(void *data);
@@ -295,9 +306,9 @@ static char *ngx_http_metric_zone_inline(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
 static char *ngx_http_metric_create_complex_vars(ngx_conf_t *cf,
-    ngx_http_metric_ctx_t *mctx);
+    ngx_http_metric_ctx_t *mctx, ngx_uint_t mctx_idx);
 static char *ngx_http_metric_create_vars(ngx_conf_t *cf,
-    ngx_http_metric_ctx_t *mctx);
+    ngx_http_metric_ctx_t *mctx, ngx_uint_t mctx_idx);
 
 static char *ngx_http_metric(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
@@ -772,14 +783,14 @@ static void
 ngx_http_metric_var_set_handler(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
-    ngx_http_metric_ctx_t  *mctx = (ngx_http_metric_ctx_t *) data;
+    ngx_uint_t  mctx_idx = (ngx_uint_t) data;
 
-    ngx_int_t                       rc;
-    ngx_str_t                       key, val, tmp;
-    ngx_http_metric_request_ctx_t  *rctx;
+    ngx_int_t                   rc;
+    ngx_str_t                   key, val, tmp;
+    ngx_http_metric_var_ctx_t  *vctx;
 
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
+    vctx = ngx_http_metric_get_var_ctx(r, mctx_idx);
+    if (vctx == NULL) {
         return;
     }
 
@@ -788,16 +799,11 @@ ngx_http_metric_var_set_handler(ngx_http_request_t *r,
 
     ngx_http_metric_parse_key_value(&key, &val, tmp);
 
-    rc = ngx_http_metric_handler(r, mctx, key, val);
+    rc = ngx_http_metric_handler(r, vctx->mctx, key, val);
 
     if (rc == NGX_OK) {
-        rctx->tmp.len = ngx_min(tmp.len, NGX_HTTP_METRIC_MAX_LEN);
-        ngx_memcpy(rctx->tmp.data, tmp.data, rctx->tmp.len);
-
-        rctx->key.len = ngx_min(key.len, NGX_HTTP_METRIC_MAX_LEN);
-        ngx_memcpy(rctx->key.data, key.data, rctx->key.len);
-
-        rctx->mctx = mctx;
+        vctx->key.len = ngx_min(key.len, NGX_HTTP_METRIC_MAX_LEN);
+        ngx_memcpy(vctx->key.data, key.data, vctx->key.len);
     }
 }
 
@@ -806,155 +812,45 @@ static ngx_int_t
 ngx_http_metric_var_get_handler(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
-    ngx_http_metric_request_ctx_t  *rctx;
+    ngx_uint_t  mctx_idx = (ngx_uint_t) data;
 
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
+    size_t                         size;
+    u_char                        *end, *pos, *start;
+    ngx_int_t                      rc;
+    ngx_str_t                      buf, key;
+    ngx_uint_t                     hash, i;
+    ngx_http_metric_t            **metric_ptr;
+    ngx_http_metric_ctx_t         *mctx;
+    ngx_http_metric_node_t        *node;
+    ngx_http_metric_var_ctx_t     *vctx;
+    ngx_http_metric_state_ctx_t    sctx;
+
+    vctx = ngx_http_metric_get_var_ctx(r, mctx_idx);
+    if (vctx == NULL) {
         return NGX_ERROR;
     }
 
-    if (rctx->tmp.len == 0) {
+    key = vctx->key;
+
+    if (key.len == 0) {
         v->not_found = 1;
         return NGX_OK;
     }
 
-    v->valid = 1;
-    v->no_cacheable = 0;
-    v->not_found = 0;
-    v->len = rctx->tmp.len;
-    v->data = rctx->tmp.data;
+    hash = ngx_crc32_short(key.data, key.len);
 
-    return NGX_OK;
-}
-
-
-static void
-ngx_http_metric_var_set_key_handler(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    ngx_http_metric_request_ctx_t  *rctx;
-
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
-        return;
-    }
-
-    rctx->key.len = ngx_min(v->len, NGX_HTTP_METRIC_MAX_LEN);
-    ngx_memcpy(rctx->key.data, v->data, rctx->key.len);
-
-    rctx->mctx = (ngx_http_metric_ctx_t *) data;
-}
-
-
-static ngx_int_t
-ngx_http_metric_var_get_key_handler(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    ngx_http_metric_request_ctx_t  *rctx;
-
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (rctx->key.len == 0) {
-        v->not_found = 1;
-        return NGX_OK;
-    }
-
-    v->valid = 1;
-    v->no_cacheable = 0;
-    v->not_found = 0;
-    v->len = rctx->key.len;
-    v->data = rctx->key.data;
-
-    return NGX_OK;
-}
-
-
-static void
-ngx_http_metric_var_set_value_handler(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    ngx_http_metric_ctx_t  *mctx = (ngx_http_metric_ctx_t *) data;
-
-    ngx_int_t                       rc;
-    ngx_str_t                      *key, *tmp, val;
-    ngx_http_metric_request_ctx_t  *rctx;
-
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
-        return;
-    }
-
-    val.data = v->data;
-    val.len = v->len;
-
-    rc = ngx_http_metric_handler(r, mctx, rctx->key, val);
-
-    if (rc != NGX_OK) {
-        return;
-    }
-
-    key = &rctx->key;
-    tmp = &rctx->tmp;
-
-    tmp->len = ngx_min(key->len + val.len + 1, NGX_HTTP_METRIC_MAX_LEN);
-
-    ngx_snprintf(tmp->data, tmp->len, "%V=%V", key, &val);
-}
-
-
-static ngx_int_t
-ngx_http_metric_var_get_value_handler(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    ngx_http_metric_ctx_t  *mctx = (ngx_http_metric_ctx_t *) data;
-
-    size_t                           size;
-    u_char                          *end, *pos, *start;
-    ngx_int_t                        rc;
-    ngx_str_t                        buf;
-    ngx_uint_t                       hash, i;
-    ngx_http_metric_t              **metric_ptr;
-    ngx_http_metric_node_t          *node;
-    ngx_http_metric_state_ctx_t      sctx;
-    ngx_http_metric_request_ctx_t   *rctx;
-
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (rctx->key.len == 0) {
-        v->not_found = 1;
-        return NGX_OK;
-    }
-
-    /* the size contains the number of metrics delimiters */
-    size = mctx->str_size + (mctx->metrics->nelts - 1) * 2;
-
-    start = ngx_pnalloc(r->connection->pool, size);
-    if (start == NULL) {
-        return NGX_ERROR;
-    }
-
-    buf.len = 0;
-    buf.data = start;
-
-    hash = ngx_crc32_short(rctx->key.data, rctx->key.len);
+    mctx = vctx->mctx;
 
     ngx_rwlock_rlock(&mctx->sh->rbt_lock);
 
-    node = ngx_http_metric_find_node_locked(mctx, hash, rctx->key, &end);
+    node = ngx_http_metric_find_node_locked(mctx, hash, key, &end);
 
     if (node == NULL) {
         /* the expired node is not in the rbtree */
 
         if (mctx->sh->is_expired == 0
-            || mctx->discard_key.len != rctx->key.len
-            || ngx_memcmp(mctx->discard_key.data, rctx->key.data,
-                          rctx->key.len) != 0)
+            || mctx->discard_key.len != key.len
+            || ngx_memcmp(mctx->discard_key.data, key.data, key.len) != 0)
         {
             ngx_rwlock_unlock(&mctx->sh->rbt_lock);
             v->not_found = 1;
@@ -967,6 +863,206 @@ ngx_http_metric_var_get_value_handler(ngx_http_request_t *r,
 
     ngx_rwlock_rlock(&node->lock);
     ngx_rwlock_unlock(&mctx->sh->rbt_lock);
+
+    /*
+     * the size contains key length + length of '=' sign +
+     * + the number of metrics delimiters
+     */
+
+    buf.len = key.len + 1;
+
+    size = buf.len + mctx->str_size + (mctx->metrics->nelts - 1) * 2;
+
+    start = ngx_pnalloc(r->pool, size);
+    if (start == NULL) {
+        ngx_rwlock_unlock(&node->lock);
+        return NGX_ERROR;
+    }
+
+    /* skip key due to lock */
+    buf.data = start + buf.len;
+
+    ngx_http_metric_slab_first_locked(&pos, &end);
+
+    i = 0;
+
+    metric_ptr = mctx->metrics->elts;
+
+    for ( ;; ) {
+
+        ngx_memzero(&sctx, sizeof(ngx_http_metric_state_ctx_t));
+
+        sctx.args = metric_ptr[i]->args;
+
+        do {
+            if (pos == end) {
+                ngx_http_metric_slab_next_locked(&pos, &end);
+            }
+
+            rc = metric_ptr[i]->mode->get(&sctx, (void **) &pos, end, &buf);
+
+        } while (rc == NGX_AGAIN);
+
+        i++;
+
+        if (i == mctx->metrics->nelts) {
+            break;
+        }
+
+        buf.len += 2;
+        *buf.data++ = ',';
+        *buf.data++ = ' ';
+    }
+
+    ngx_rwlock_unlock(&node->lock);
+
+    ngx_memcpy(start, key.data, key.len);
+    start[key.len] = '=';
+
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->len = buf.len;
+    v->data = start;
+
+    return NGX_OK;
+}
+
+
+static void
+ngx_http_metric_var_set_key_handler(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_uint_t  mctx_idx = (ngx_uint_t) data;
+
+    ngx_http_metric_var_ctx_t  *vctx;
+
+    vctx = ngx_http_metric_get_var_ctx(r, mctx_idx);
+    if (vctx == NULL) {
+        return;
+    }
+
+    vctx->key.len = ngx_min(v->len, NGX_HTTP_METRIC_MAX_LEN);
+    ngx_memcpy(vctx->key.data, v->data, vctx->key.len);
+}
+
+
+static ngx_int_t
+ngx_http_metric_var_get_key_handler(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_uint_t  mctx_idx = (ngx_uint_t) data;
+
+    ngx_http_metric_var_ctx_t  *vctx;
+
+    vctx = ngx_http_metric_get_var_ctx(r, mctx_idx);
+    if (vctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    if (vctx->key.len == 0) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->len = vctx->key.len;
+    v->data = vctx->key.data;
+
+    return NGX_OK;
+}
+
+
+static void
+ngx_http_metric_var_set_value_handler(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_uint_t  mctx_idx = (ngx_uint_t) data;
+
+    ngx_str_t                   val;
+    ngx_http_metric_var_ctx_t  *vctx;
+
+    vctx = ngx_http_metric_get_var_ctx(r, mctx_idx);
+    if (vctx == NULL) {
+        return;
+    }
+
+    val.data = v->data;
+    val.len = v->len;
+
+    ngx_http_metric_handler(r, vctx->mctx, vctx->key, val);
+}
+
+
+static ngx_int_t
+ngx_http_metric_var_get_value_handler(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_uint_t  mctx_idx = (ngx_uint_t) data;
+
+    size_t                         size;
+    u_char                        *end, *pos, *start;
+    ngx_int_t                      rc;
+    ngx_str_t                      buf, key;
+    ngx_uint_t                     hash, i;
+    ngx_http_metric_t            **metric_ptr;
+    ngx_http_metric_ctx_t         *mctx;
+    ngx_http_metric_node_t        *node;
+    ngx_http_metric_var_ctx_t     *vctx;
+    ngx_http_metric_state_ctx_t    sctx;
+
+    vctx = ngx_http_metric_get_var_ctx(r, mctx_idx);
+    if (vctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    key = vctx->key;
+
+    if (key.len == 0) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    hash = ngx_crc32_short(key.data, key.len);
+
+    mctx = vctx->mctx;
+
+    ngx_rwlock_rlock(&mctx->sh->rbt_lock);
+
+    node = ngx_http_metric_find_node_locked(mctx, hash, key, &end);
+
+    if (node == NULL) {
+        /* the expired node is not in the rbtree */
+
+        if (mctx->sh->is_expired == 0
+            || mctx->discard_key.len != key.len
+            || ngx_memcmp(mctx->discard_key.data, key.data, key.len) != 0)
+        {
+            ngx_rwlock_unlock(&mctx->sh->rbt_lock);
+            v->not_found = 1;
+            return NGX_OK;
+        }
+
+        node = mctx->sh->expired;
+        end = ngx_align_ptr(node->key, NGX_HTTP_METRIC_PTR_SIZE);
+    }
+
+    ngx_rwlock_rlock(&node->lock);
+    ngx_rwlock_unlock(&mctx->sh->rbt_lock);
+
+    /* the size contains the number of metrics delimiters */
+    size = mctx->str_size + (mctx->metrics->nelts - 1) * 2;
+
+    start = ngx_pnalloc(r->pool, size);
+    if (start == NULL) {
+        ngx_rwlock_unlock(&node->lock);
+        return NGX_ERROR;
+    }
+
+    buf.len = 0;
+    buf.data = start;
 
     ngx_http_metric_slab_first_locked(&pos, &end);
 
@@ -1016,51 +1112,45 @@ static ngx_int_t
 ngx_http_metric_complex_var_get_value_handler(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
-    ngx_http_metric_t  *metric = (ngx_http_metric_t *) data;
+    ngx_http_metric_var_data_t  *vdata = (ngx_http_metric_var_data_t *) data;
 
-    u_char                         *end, *pos, *start;
-    size_t                          chunk, rest;
-    ngx_str_t                       buf;
-    ngx_int_t                       rc;
-    ngx_uint_t                      hash;
-    ngx_http_metric_ctx_t          *mctx;
-    ngx_http_metric_node_t         *node;
-    ngx_http_metric_state_ctx_t     sctx;
-    ngx_http_metric_request_ctx_t  *rctx;
+    u_char                       *end, *pos, *start;
+    size_t                        chunk, rest;
+    ngx_str_t                     buf, key;
+    ngx_int_t                     rc;
+    ngx_uint_t                    hash;
+    ngx_http_metric_t            *metric;
+    ngx_http_metric_ctx_t        *mctx;
+    ngx_http_metric_node_t       *node;
+    ngx_http_metric_var_ctx_t    *vctx;
+    ngx_http_metric_state_ctx_t   sctx;
 
-    rctx = ngx_http_metric_get_var_ctx(r);
-    if (rctx == NULL) {
+    vctx = ngx_http_metric_get_var_ctx(r, vdata->mctx_idx);
+    if (vctx == NULL) {
         return NGX_ERROR;
     }
 
-    if (rctx->key.len == 0 || rctx->mctx == NULL) {
+    key = vctx->key;
+
+    if (key.len == 0) {
         v->not_found = 1;
         return NGX_OK;
     }
 
-    start = ngx_pnalloc(r->connection->pool, metric->str_size);
-    if (start == NULL) {
-        return NGX_ERROR;
-    }
+    hash = ngx_crc32_short(key.data, key.len);
 
-    buf.len = 0;
-    buf.data = start;
-
-    hash = ngx_crc32_short(rctx->key.data, rctx->key.len);
-
-    mctx = rctx->mctx;
+    mctx = vctx->mctx;
 
     ngx_rwlock_rlock(&mctx->sh->rbt_lock);
 
-    node = ngx_http_metric_find_node_locked(mctx, hash, rctx->key, &end);
+    node = ngx_http_metric_find_node_locked(mctx, hash, key, &end);
 
     if (node == NULL) {
         /* the expired node is not in the rbtree */
 
         if (mctx->sh->is_expired == 0
-            || mctx->discard_key.len != rctx->key.len
-            || ngx_memcmp(mctx->discard_key.data, rctx->key.data,
-                          rctx->key.len) != 0)
+            || mctx->discard_key.len != key.len
+            || ngx_memcmp(mctx->discard_key.data, key.data, key.len) != 0)
         {
             ngx_rwlock_unlock(&mctx->sh->rbt_lock);
             v->not_found = 1;
@@ -1073,6 +1163,17 @@ ngx_http_metric_complex_var_get_value_handler(ngx_http_request_t *r,
 
     ngx_rwlock_rlock(&node->lock);
     ngx_rwlock_unlock(&mctx->sh->rbt_lock);
+
+    metric = vdata->metric;
+
+    start = ngx_pnalloc(r->pool, metric->str_size);
+    if (start == NULL) {
+        ngx_rwlock_unlock(&node->lock);
+        return NGX_ERROR;
+    }
+
+    buf.len = 0;
+    buf.data = start;
 
     ngx_http_metric_slab_first_locked(&pos, &end);
 
@@ -1117,9 +1218,14 @@ ngx_http_metric_complex_var_get_value_handler(ngx_http_request_t *r,
 }
 
 
-static ngx_http_metric_request_ctx_t *
-ngx_http_metric_get_var_ctx(ngx_http_request_t *r)
+static ngx_http_metric_var_ctx_t *
+ngx_http_metric_get_var_ctx(ngx_http_request_t *r, ngx_uint_t mctx_idx)
 {
+    size_t                          size;
+    ngx_uint_t                      i;
+    ngx_http_metric_ctx_t          *mctx;
+    ngx_http_metric_var_ctx_t      *vctx;
+    ngx_http_metric_main_conf_t    *mmcf;
     ngx_http_metric_request_ctx_t  *rctx;
 
     rctx = ngx_http_metric_get_request_ctx(r);
@@ -1127,23 +1233,47 @@ ngx_http_metric_get_var_ctx(ngx_http_request_t *r)
         return NULL;
     }
 
-    if (rctx->key.data == NULL) {
-        rctx->key.data = ngx_pnalloc(r->connection->pool,
-                                     NGX_HTTP_METRIC_MAX_LEN);
-        if (rctx->key.data == NULL) {
+    mmcf = ngx_http_get_module_main_conf(r, ngx_http_metric_module);
+    if (mmcf == NULL) {
+        return NULL;
+    }
+
+    if (rctx->vctx == NULL) {
+        size = mmcf->count * sizeof(ngx_http_metric_var_ctx_t *);
+
+        rctx->vctx = ngx_pcalloc(r->pool, size);
+        if (rctx->vctx == NULL) {
             return NULL;
         }
     }
 
-    if (rctx->tmp.data == NULL) {
-        rctx->tmp.data = ngx_pnalloc(r->connection->pool,
-                                     NGX_HTTP_METRIC_MAX_LEN);
-        if (rctx->tmp.data == NULL) {
+    /* find a variable context for a specific metric zone */
+
+    vctx = rctx->vctx[mctx_idx];
+
+    if (vctx == NULL) {
+        vctx = ngx_pcalloc(r->pool, sizeof(ngx_http_metric_var_ctx_t));
+        if (vctx == NULL) {
             return NULL;
         }
+
+        rctx->vctx[mctx_idx] = vctx;
+
+        vctx->key.data = ngx_pnalloc(r->pool, NGX_HTTP_METRIC_MAX_LEN);
+        if (vctx->key.data == NULL) {
+            return NULL;
+        }
+
+        mctx = mmcf->mctx;
+
+        for (i = 0; i != mctx_idx; i++) {
+            mctx = mctx->next;
+        }
+
+        vctx->mctx = mctx;
     }
 
-    return rctx;
+    return vctx;
 }
 
 
@@ -1777,18 +1907,105 @@ ngx_http_metric_init_zone(ngx_shm_zone_t *shm_zone, void *data)
 
     void                    **last;
     u_char                   *end, *pos;
-    ngx_str_t                 tmp;
+    ngx_str_t                *mode_name, tmp;
     ngx_int_t                 rc;
+    ngx_uint_t                i;
+    ngx_http_metric_t       **metric_ptr, **ometric_ptr;
     ngx_http_metric_ctx_t    *mctx;
+    ngx_http_metric_args_t   *args, *oargs;
     ngx_http_metric_node_t   *node;
 
     mctx = shm_zone->data;
 
     if (octx) {
+        if (shm_zone->shm.size != octx->shm_zone->shm.size) {
+            ngx_log_error(NGX_LOG_INFO, shm_zone->shm.log, 0,
+                          "metric zone \"%V\" uses the \"%uz\" size "
+                          "while previously it used the \"%uz\" size",
+                          &shm_zone->shm.name, shm_zone->shm.size,
+                          octx->shm_zone->shm.size);
+            goto done;
+        }
+
+        if (octx->metrics->nelts != mctx->metrics->nelts) {
+            ngx_log_error(NGX_LOG_INFO, shm_zone->shm.log, 0,
+                          "metric zone \"%V\" uses the \"%ui\" metrics "
+                          "while previously it used the \"%ui\" metrics",
+                          &shm_zone->shm.name, mctx->metrics->nelts,
+                          octx->metrics->nelts);
+            goto done;
+        }
+
+        metric_ptr = mctx->metrics->elts;
+        ometric_ptr = octx->metrics->elts;
+
+        for (i = 0; i < mctx->metrics->nelts; i++) {
+            if (metric_ptr[i]->mode != ometric_ptr[i]->mode) {
+                ngx_log_error(NGX_LOG_INFO, shm_zone->shm.log, 0,
+                              "metric zone \"%V\" uses the \"%V\" mode "
+                              "while previously it used the \"%V\" mode",
+                              &shm_zone->shm.name, &metric_ptr[i]->mode->name,
+                              &ometric_ptr[i]->mode->name);
+                goto done;
+            }
+
+            mode_name = &metric_ptr[i]->mode->name;
+
+            args = &metric_ptr[i]->args;
+            oargs = &ometric_ptr[i]->args;
+
+            if (ngx_strcmp(mode_name->data, "average mean") == 0) {
+                if (args->avg.count != oargs->avg.count) {
+                    ngx_log_error(NGX_LOG_INFO, shm_zone->shm.log, 0,
+                                  "metric \"%V\" in metric zone \"%V\" "
+                                  "uses the \"count=%ui\" while previously "
+                                  "it used the \"count=%ui\"",
+                                  &metric_ptr[i]->name, &shm_zone->shm.name,
+                                  args->avg.count, oargs->avg.count);
+                    goto done;
+                }
+
+                if ((args->avg.window == 0 || oargs->avg.window == 0)
+                    && args->avg.window != oargs->avg.window)
+                {
+                    ngx_log_error(NGX_LOG_INFO, shm_zone->shm.log, 0,
+                                  "the \"window=\" parameter of metric \"%V\" "
+                                  "in metric zone \"%V\" has been switched "
+                                  "from/to \"off\"",
+                                  &metric_ptr[i]->name, &shm_zone->shm.name);
+                    goto done;
+                }
+
+                continue;
+            }
+
+            if (ngx_strcmp(mode_name->data, "histogram") == 0) {
+                if (args->hist->nelts != oargs->hist->nelts) {
+                    ngx_log_error(NGX_LOG_INFO, shm_zone->shm.log, 0,
+                                  "metric \"%V\" in metric zone \"%V\" "
+                                  "uses the \"%ui\" buckets while previously "
+                                  "it used the \"%ui\" buckets",
+                                  &metric_ptr[i]->name, &shm_zone->shm.name,
+                                  args->hist->nelts, oargs->hist->nelts);
+                    goto done;
+                }
+            }
+        }
+
         mctx->sh = octx->sh;
         mctx->shpool = octx->shpool;
+
+        ngx_shm_free(&shm_zone->shm);
+        shm_zone->shm.addr = octx->shm_zone->shm.addr;
+        shm_zone->shm.exists = octx->shm_zone->shm.exists;
+
+        octx->shm_zone->noreuse = 0;
+        shm_zone->noreuse = 0;
+
         return NGX_OK;
     }
+
+done:
 
     mctx->shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
 
@@ -2129,6 +2346,7 @@ ngx_http_metric_zone_complex(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     shm_zone->data = mctx;
     shm_zone->init = ngx_http_metric_init_zone;
+    shm_zone->noreuse = 1;
 
     mctx->api = ngx_http_metric_api_complex_handler;
 
@@ -2182,11 +2400,12 @@ ngx_http_metric_zone_complex(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     *cf = save;
 
     if (rv == NGX_CONF_OK) {
-        rv = ngx_http_metric_create_complex_vars(cf, mctx);
+        rv = ngx_http_metric_create_complex_vars(cf, mctx, mmcf->count);
 
         if (rv == NGX_CONF_OK) {
             *mmcf->next = mctx;
             mmcf->next = &mctx->next;
+            mmcf->count += 1;
         }
     }
 
@@ -2246,6 +2465,7 @@ ngx_http_metric_zone_inline(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     shm_zone->data = mctx;
     shm_zone->init = ngx_http_metric_init_zone;
+    shm_zone->noreuse = 1;
 
     mctx->api = ngx_http_metric_api_inline_handler;
 
@@ -2397,11 +2617,12 @@ found:
     mctx->data_size = metric->data_size;
     mctx->str_size = metric->str_size;
 
-    rv = ngx_http_metric_create_vars(cf, mctx);
+    rv = ngx_http_metric_create_vars(cf, mctx, mmcf->count);
 
     if (rv == NGX_CONF_OK) {
         *mmcf->next = mctx;
         mmcf->next = &mctx->next;
+        mmcf->count += 1;
     }
 
     return rv;
@@ -2410,18 +2631,19 @@ found:
 
 static char *
 ngx_http_metric_create_complex_vars(ngx_conf_t *cf,
-    ngx_http_metric_ctx_t *mctx)
+    ngx_http_metric_ctx_t *mctx, ngx_uint_t mctx_idx)
 {
-    char                    *rv;
-    u_char                  *p;
-    size_t                   size;
-    ngx_str_t                s, shm_name, name;
-    ngx_uint_t               flags, i;
-    ngx_http_metric_t      **metric_ptr;
-    ngx_http_variable_t     *var;
-    ngx_http_metric_var_t   *v;
+    char                         *rv;
+    u_char                       *p;
+    size_t                        size;
+    ngx_str_t                     s, shm_name, name;
+    ngx_uint_t                    flags, i;
+    ngx_http_metric_t           **metric_ptr;
+    ngx_http_variable_t          *var;
+    ngx_http_metric_var_t        *v;
+    ngx_http_metric_var_data_t   *vdata;
 
-    rv = ngx_http_metric_create_vars(cf, mctx);
+    rv = ngx_http_metric_create_vars(cf, mctx, mctx_idx);
     if (rv != NGX_CONF_OK) {
         return rv;
     }
@@ -2455,9 +2677,17 @@ ngx_http_metric_create_complex_vars(ngx_conf_t *cf,
                 return NGX_CONF_ERROR;
             }
 
+            vdata = ngx_palloc(cf->pool, sizeof(ngx_http_metric_var_data_t));
+            if (vdata == NULL) {
+                return NGX_CONF_ERROR;
+            }
+
+            vdata->metric = metric_ptr[i];
+            vdata->mctx_idx = mctx_idx;
+
             var->get_handler = v->get;
             var->set_handler = v->set;
-            var->data = (uintptr_t) metric_ptr[i];
+            var->data = (uintptr_t) vdata;
         }
 
     } while (++v != ngx_items_end(ngx_http_metric_complex_vars));
@@ -2467,7 +2697,8 @@ ngx_http_metric_create_complex_vars(ngx_conf_t *cf,
 
 
 static char *
-ngx_http_metric_create_vars(ngx_conf_t *cf, ngx_http_metric_ctx_t *mctx)
+ngx_http_metric_create_vars(ngx_conf_t *cf, ngx_http_metric_ctx_t *mctx,
+    ngx_uint_t mctx_idx)
 {
     u_char                 *p;
     size_t                  size;
@@ -2502,7 +2733,7 @@ ngx_http_metric_create_vars(ngx_conf_t *cf, ngx_http_metric_ctx_t *mctx)
 
         var->get_handler = v->get;
         var->set_handler = v->set;
-        var->data = (uintptr_t) mctx;
+        var->data = (uintptr_t) mctx_idx;
 
     } while (++v != ngx_items_end(ngx_http_metric_vars));
 
@@ -2605,23 +2836,28 @@ static void
 ngx_http_metric_parse_key_value(ngx_str_t *key, ngx_str_t *value,
     ngx_str_t src)
 {
-    key->len = 0;
-    key->data = src.data;
+    u_char  *p;
 
-    while (key->len < src.len) {
+    p = src.data + src.len;
 
-        if (*src.data == '=') {
-            src.len--;
-            src.data++;
+    while (p != src.data) {
+        p--;
 
-            break;
+        if (*p == '=') {
+            key->len = p - src.data;
+            key->data = src.data;
+
+            value->len = src.len - key->len - 1;
+            value->data = p + 1;
+
+            return;
         }
-
-        key->len++;
-        src.data++;
     }
 
-    value->len = src.len - key->len;
+    key->len = src.len;
+    key->data = src.data;
+
+    value->len = 0;
     value->data = src.data;
 }
 
