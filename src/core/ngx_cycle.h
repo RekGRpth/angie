@@ -179,6 +179,7 @@ extern ngx_uint_t             ngx_test_config;
 extern ngx_uint_t             ngx_dump_config;
 extern ngx_uint_t             ngx_quiet_mode;
 extern ngx_uint_t             ngx_show_loaded_modules;
+extern ngx_uint_t             ngx_show_log_filters;
 
 
 #endif /* _NGX_CYCLE_H_INCLUDED_ */

@@ -333,8 +333,8 @@ struct ngx_http_acme_sh_alpn_s {
 
 
 static u_char *ngx_http_acme_log_error(ngx_log_t *log, u_char *buf, size_t len);
-static u_char *ngx_http_acme_client_log_handler(ngx_http_request_t *r,
-    ngx_http_request_t *sr, u_char *buf, size_t len);
+static u_char *ngx_http_acme_client_log_handler(ngx_log_t *log, u_char *buf,
+    u_char *last, void *data);
 #if (NGX_DEBUG)
 static void ngx_log_acme_debug_core(ngx_log_t *log, const char *prefix,
     ngx_str_t *name, const char *fmt, va_list args);
@@ -719,16 +719,21 @@ static ngx_api_entry_t  ngx_api_acme_client_entry = {
 static u_char *
 ngx_http_acme_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    u_char  *p = buf;
-
+    u_char                     *p, *last;
     ngx_http_log_ctx_t         *ctx;
     ngx_http_acme_main_conf_t  *amcf;
 
     ctx = log->data;
     amcf = ngx_container_of(ctx, ngx_http_acme_main_conf_t, log_ctx);
 
+    p = buf;
+    last = buf + len;
+
+    ngx_log_add_tag(log, "acme");
+
     if (amcf->current != NULL) {
-        p = ngx_snprintf(p, len, ", ACME client: %V", &amcf->current->name);
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(ACME_CLIENT),
+                             "%V", &amcf->current->name);
     }
 
     return p;
@@ -736,18 +741,24 @@ ngx_http_acme_log_error(ngx_log_t *log, u_char *buf, size_t len)
 
 
 static u_char *
-ngx_http_acme_client_log_handler(ngx_http_request_t *r, ngx_http_request_t *sr,
-    u_char *buf, size_t len)
+ngx_http_acme_client_log_handler(ngx_log_t *log, u_char *buf, u_char *last,
+    void *data)
 {
     u_char                   *p;
+    ngx_http_log_ctx_t       *ctx;
+    ngx_http_request_t       *r;
     ngx_http_acme_session_t  *ses;
+
+    ctx = data;
+    r = ctx->request;
 
     p = buf;
 
     ses = ngx_http_get_module_ctx(r, ngx_http_acme_module);
 
     if (ses && ses->client) {
-        p = ngx_snprintf(p, len, ", ACME client: %V", &ses->client->name);
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(ACME_CLIENT),
+                             "%V", &ses->client->name);
     }
 
     return p;

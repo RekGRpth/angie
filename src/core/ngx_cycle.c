@@ -43,6 +43,7 @@ ngx_uint_t             ngx_test_config;
 ngx_uint_t             ngx_dump_config;
 ngx_uint_t             ngx_quiet_mode;
 ngx_uint_t             ngx_show_loaded_modules;
+ngx_uint_t             ngx_show_log_filters;
 
 
 /* STUB NAME */
@@ -303,6 +304,14 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
         environ = senv;
         ngx_destroy_cycle_pools(&conf);
         return NULL;
+    }
+
+    if (ngx_show_log_filters) {
+        ngx_show_log_filters_info(cycle);
+
+        if (!ngx_test_config) {
+            exit(0);
+        }
     }
 
     if (ngx_show_loaded_modules) {

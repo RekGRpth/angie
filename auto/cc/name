@@ -64,10 +64,6 @@ elif `$CC -V 2>&1 | grep 'Sun C' >/dev/null 2>&1`; then
 
     have=NGX_COMPILER value="\"Sun C $NGX_CC_VER\"" . auto/define
 
-elif `$CC -V 2>&1 | grep '^Compaq C' >/dev/null 2>&1`; then
-    NGX_CC_NAME=ccc
-    echo " + using Compaq C compiler"
-
 elif `$CC -V 2>&1 | grep '^aCC: ' >/dev/null 2>&1`; then
     NGX_CC_NAME=acc
     echo " + using HP aC++ compiler"

@@ -413,20 +413,21 @@ ngx_syslog_cleanup(void *data)
 static u_char *
 ngx_syslog_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    u_char             *p;
+    u_char             *p, *last;
     ngx_syslog_peer_t  *peer;
 
     p = buf;
+    last = buf + len;
 
     if (log->action) {
-        p = ngx_snprintf(buf, len, " while %s", log->action);
-        len -= p - buf;
+        p = ngx_log_action(log, p, last, log->action);
     }
 
     peer = log->data;
 
     if (peer) {
-        p = ngx_snprintf(p, len, ", server: %V", &peer->server.name);
+        p = ngx_log_property(log, p, last, ngx_core_log_prop(SYSLOG_SERVER),
+                             "%V", &peer->server.name);
     }
 
     return p;

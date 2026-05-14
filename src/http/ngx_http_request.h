@@ -466,7 +466,7 @@ struct ngx_http_request_s {
     ngx_http_v2_stream_t             *stream;
     ngx_http_v3_parse_t              *v3_parse;
 
-    ngx_http_log_handler_pt           log_handler;
+    ngx_log_ext_handler_pt            log_handler;
 
     ngx_http_cleanup_t               *cleanup;
 

@@ -5113,20 +5113,23 @@ ngx_resolver_strerror(ngx_int_t err)
 static u_char *
 ngx_resolver_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    u_char                     *p;
+    u_char                     *p, *last;
     ngx_resolver_connection_t  *rec;
 
     p = buf;
+    last = buf + len;
+
+    ngx_log_add_tag(log, "resolver");
 
     if (log->action) {
-        p = ngx_snprintf(buf, len, " while %s", log->action);
-        len -= p - buf;
+        p = ngx_log_action(log, p, last, log->action);
     }
 
     rec = log->data;
 
     if (rec) {
-        p = ngx_snprintf(p, len, ", resolver: %V", &rec->server);
+        p = ngx_log_property(log, p, last, ngx_core_log_prop(RESOLVER),
+                             "%V", &rec->server);
     }
 
     return p;

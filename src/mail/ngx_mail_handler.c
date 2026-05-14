@@ -1264,45 +1264,65 @@ ngx_mail_close_connection(ngx_connection_t *c)
 u_char *
 ngx_mail_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    u_char              *p;
-    ngx_mail_session_t  *s;
-    ngx_mail_log_ctx_t  *ctx;
+    u_char                    *p, *last;
+    ngx_str_t                 *utags;
+    ngx_uint_t                 i;
+    ngx_mail_session_t        *s;
+    ngx_mail_log_ctx_t        *ctx;
+    ngx_mail_core_srv_conf_t  *cscf;
 
-    if (log->action) {
-        p = ngx_snprintf(buf, len, " while %s", log->action);
-        len -= p - buf;
-        buf = p;
-    }
+    p = buf;
+    last = buf + len;
 
     ctx = log->data;
-
-    p = ngx_snprintf(buf, len, ", client: %V", ctx->client);
-    len -= p - buf;
-    buf = p;
-
     s = ctx->session;
+
+    ngx_log_add_tag(log, "mail");
+
+    if (s) {
+        cscf = ngx_mail_get_module_srv_conf(s, ngx_mail_core_module);
+
+        if (cscf->error_log_user_tags) {
+
+            utags = cscf->error_log_user_tags->elts;
+
+            for (i = 0; i < cscf->error_log_user_tags->nelts; i++) {
+                ngx_log_add_str_tag(log, &utags[i]);
+            }
+        }
+    }
+
+    if (log->action) {
+        p = ngx_log_action(log, p, last, log->action);
+    }
+
+    p = ngx_log_property(log, p, last, ngx_mail_log_prop(CLIENT), "%V",
+                         ctx->client);
+
 
     if (s == NULL) {
         return p;
     }
 
-    p = ngx_snprintf(buf, len, "%s, server: %V",
-                     s->starttls ? " using starttls" : "",
-                     s->addr_text);
-    len -= p - buf;
-    buf = p;
+    p = ngx_log_property(log, p, last, ngx_mail_log_prop(SERVER), "%V",
+                         s->addr_text);
+
+    if (s->starttls) {
+        p = ngx_log_property(log, p, last, ngx_mail_log_prop(STARTTLS),
+                             "true");
+    }
 
     if (s->login.len) {
-        p = ngx_snprintf(buf, len, ", login: \"%V\"", &s->login);
-        len -= p - buf;
-        buf = p;
+        p = ngx_log_property(log, p, last, ngx_mail_log_prop(LOGIN), "%V",
+                             &s->login);
     }
 
     if (s->proxy == NULL) {
         return p;
     }
 
-    p = ngx_snprintf(buf, len, ", upstream: %V", s->proxy->upstream.name);
+    p = ngx_log_property(log, p, last, ngx_mail_log_prop(UPSTREAM), "%V",
+                         s->proxy->upstream.name);
 
     return p;
 }

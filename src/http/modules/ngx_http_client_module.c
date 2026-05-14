@@ -491,7 +491,7 @@ ngx_http_client_log_error(ngx_log_t *log, u_char *buf, size_t len)
         return buf;
     }
 
-    return r->log_handler(r, ctx->current_request, buf, len);
+    return r->log_handler(log, buf, buf + len, ctx);
 }
 
 

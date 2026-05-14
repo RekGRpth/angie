@@ -104,7 +104,7 @@ static void ngx_stream_upstream_free_peer(ngx_stream_upstream_t *u,
     ngx_uint_t state);
 static void ngx_stream_proxy_finalize(ngx_stream_session_t *s, ngx_uint_t rc);
 static u_char *ngx_stream_proxy_log_error(ngx_log_t *log, u_char *buf,
-    size_t len);
+    u_char *last, void *data);
 
 static void *ngx_stream_proxy_create_srv_conf(ngx_conf_t *cf);
 static char *ngx_stream_proxy_merge_srv_conf(ngx_conf_t *cf, void *parent,
@@ -2438,31 +2438,42 @@ noupstream:
 
 
 static u_char *
-ngx_stream_proxy_log_error(ngx_log_t *log, u_char *buf, size_t len)
+ngx_stream_proxy_log_error(ngx_log_t *log, u_char *buf, u_char *last,
+    void *data)
 {
     u_char                 *p;
     ngx_connection_t       *pc;
     ngx_stream_session_t   *s;
     ngx_stream_upstream_t  *u;
 
-    s = log->data;
+    s = data;
 
     u = s->upstream;
 
     p = buf;
 
+    ngx_log_add_tag(log, "upstream");
+
     if (u->peer.name) {
-        p = ngx_snprintf(p, len, ", upstream: \"%V\"", u->peer.name);
-        len -= p - buf;
+        ngx_log_add_tag(log, "peer");
+        p = ngx_log_property(log, p, last, ngx_stream_log_prop(UPSTREAM),
+                             "%V", u->peer.name);
     }
 
     pc = u->peer.connection;
 
-    p = ngx_snprintf(p, len,
-                     ", bytes from/to client:%O/%O"
-                     ", bytes from/to upstream:%O/%O",
-                     s->received, s->connection->sent,
-                     u->received, pc ? pc->sent : 0);
+    p = ngx_log_property(log, p, last, ngx_stream_log_prop(BYTES_FROM_CLIENT),
+                         "%O", s->received);
+
+    p = ngx_log_property(log, p, last, ngx_stream_log_prop(BYTES_TO_CLIENT),
+                         "%O", s->connection->sent);
+
+    p = ngx_log_property(log, p, last,
+                         ngx_stream_log_prop(BYTES_FROM_UPSTREAM), "%O",
+                         u->received);
+
+    p = ngx_log_property(log, p, last, ngx_stream_log_prop(BYTES_TO_UPSTREAM),
+                         "%O", pc ? pc->sent : 0);
 
     return p;
 }

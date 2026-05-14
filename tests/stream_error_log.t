@@ -129,8 +129,8 @@ SKIP: {
 skip "relies on error log contents", 5 unless $ENV{TEST_ANGIE_UNSAFE};
 
 my $msg = 'no live upstreams while connecting to upstream, '
-	. 'client: 127.0.0.1, server: 127.0.0.1:' . port(8080)
-	. ', upstream: "u"';
+	. 'client: "127.0.0.1", server: "127.0.0.1:' . port(8080).'",'
+	. ' protocol: "tcp", upstream: "u"';
 
 unlike($t->read_file('e_glob.log'), qr/$msg/ms, 'stream error in global');
 like($t->read_file('e_info.log'), qr/$msg/ms, 'stream error in info');

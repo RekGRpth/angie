@@ -41,6 +41,29 @@ typedef struct ngx_stream_session_s  ngx_stream_session_t;
     (offsetof(ngx_rbtree_node_t, color) + sizeof(ngx_stream_stats_zone_node_t))
 
 
+#define NGX_STREAM_LOG_PROP_LIST                                              \
+    NGX_X(CLIENT,              "client",              "client")               \
+    NGX_X(SERVER,              "server",              "server")               \
+    NGX_X(PROTOCOL,            "protocol",            "protocol")             \
+    NGX_X(SESSION,             "session",             "session")              \
+    NGX_X(UPSTREAM,            "upstream",            "upstream")             \
+    NGX_X(BYTES_FROM_CLIENT,   "bytes_from_client",   "bytes from client")    \
+    NGX_X(BYTES_TO_CLIENT,     "bytes_to_client",     "bytes to client")      \
+    NGX_X(BYTES_FROM_UPSTREAM, "bytes_from_upstream", "bytes from upstream")  \
+    NGX_X(BYTES_TO_UPSTREAM,   "bytes_to_upstream",   "bytes to upstream")
+
+enum {
+    #define NGX_X(id, key, name)  NGX_STREAM_LOG_PROP__##id,
+    NGX_STREAM_LOG_PROP_LIST
+    #undef NGX_X
+};
+
+#define ngx_stream_log_prop(id)                                               \
+    ((ngx_log_property_key_t)                                                 \
+     { ngx_stream_log_properties[NGX_STREAM_LOG_PROP__##id].index })
+
+extern ngx_log_property_t  ngx_stream_log_properties[];
+
 
 typedef struct {
     void                         **main_conf;
@@ -251,6 +274,9 @@ typedef struct {
     ngx_stream_status_zone_t      *status_zone;
 #endif
 
+    ngx_array_t                   *error_log_user_tags;
+                                                  /* array of complex values */
+
     unsigned                       listen:1;
 #if (NGX_PCRE)
     unsigned                       captures:1;
@@ -352,7 +378,7 @@ struct ngx_stream_session_s {
     time_t                         start_sec;
     ngx_msec_t                     start_msec;
 
-    ngx_log_handler_pt             log_handler;
+    ngx_log_ext_handler_pt         log_handler;
 
     void                         **ctx;
     void                         **main_conf;

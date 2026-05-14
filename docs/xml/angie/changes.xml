@@ -220,6 +220,22 @@ to log SSL keys.
 </para>
 </change>
 
+<change type="feature">
+<para lang="ru">
+Добавлена возможность фильтрации сообщений об ошибках. Директива "error_log"
+теперь поддерживает параметр "filter=", который позволяет указать условия,
+при которых ошибка будет записана в журнал. Новая директива
+"error_log_user_tag" позволяет задать переменную, которая может быть
+использована в условии фильтрации.
+</para>
+<para lang="en">
+Added the ability to filter error log messages. The "error_log" directive
+now supports "filter=" parameter that specifies conditions required to
+write an error into log.  The new "error_log_user_tag" directive
+specifies a variable that can be used in filter.
+</para>
+</change>
+
 </changes>
 
 

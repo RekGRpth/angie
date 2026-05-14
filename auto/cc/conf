@@ -63,12 +63,6 @@ if test -n "$CFLAGS"; then
 
     case $NGX_CC_NAME in
 
-        ccc)
-            # Compaq C V6.5-207
-
-            ngx_include_opt="-I"
-        ;;
-
         sunc)
 
             MAIN_LINK=
@@ -124,12 +118,6 @@ else
             # Sun C 5.7 Patch 117837-04 2005/05/11
 
             . auto/cc/sunc
-        ;;
-
-        ccc)
-            # Compaq C V6.5-207
-
-            . auto/cc/ccc
         ;;
 
         acc)
@@ -220,28 +208,11 @@ if [ "$NGX_PLATFORM" != win32 ]; then
     fi
 
 
-    if [ "$NGX_CC_NAME" = "ccc" ]; then
-        echo "checking for C99 variadic macros ... disabled"
-    else
-        ngx_feature="C99 variadic macros"
-        ngx_feature_name="NGX_HAVE_C99_VARIADIC_MACROS"
-        ngx_feature_run=yes
-        ngx_feature_incs="#include <stdio.h>
-#define var(dummy, ...)  sprintf(__VA_ARGS__)"
-        ngx_feature_path=
-        ngx_feature_libs=
-        ngx_feature_test="char  buf[30]; buf[0] = '0';
-                          var(0, buf, \"%d\", 1);
-                          if (buf[0] != '1') return 1"
-        . auto/feature
-    fi
-
-
-    ngx_feature="gcc variadic macros"
-    ngx_feature_name="NGX_HAVE_GCC_VARIADIC_MACROS"
+    ngx_feature="C99 variadic macros"
+    ngx_feature_name="NGX_HAVE_C99_VARIADIC_MACROS"
     ngx_feature_run=yes
     ngx_feature_incs="#include <stdio.h>
-#define var(dummy, args...)  sprintf(args)"
+#define var(dummy, ...)  sprintf(__VA_ARGS__)"
     ngx_feature_path=
     ngx_feature_libs=
     ngx_feature_test="char  buf[30]; buf[0] = '0';
@@ -249,6 +220,12 @@ if [ "$NGX_PLATFORM" != win32 ]; then
                       if (buf[0] != '1') return 1"
     . auto/feature
 
+    if [ $ngx_found = no ]; then
+        echo
+        echo $0: error: C99 variadic macros support is not found
+        echo
+        exit 1
+    fi
 
     ngx_feature="gcc builtin 64 bit byteswap"
     ngx_feature_name="NGX_HAVE_GCC_BSWAP64"

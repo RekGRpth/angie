@@ -26,6 +26,11 @@ static char *ngx_mail_core_error_log(ngx_conf_t *cf, ngx_command_t *cmd,
 static char *ngx_mail_core_resolver(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
+ngx_log_property_t  ngx_mail_log_properties[] = {
+    #define NGX_X(id, key, name)  ngx_log_prop_decl(key, name, "mail"),
+    NGX_MAIL_LOG_PROP_LIST
+    #undef NGX_X
+};
 
 static ngx_command_t  ngx_mail_core_commands[] = {
 
@@ -69,6 +74,13 @@ static ngx_command_t  ngx_mail_core_commands[] = {
       ngx_mail_core_error_log,
       NGX_MAIL_SRV_CONF_OFFSET,
       0,
+      NULL },
+
+    { ngx_string("error_log_user_tag"),
+      NGX_MAIL_MAIN_CONF|NGX_MAIL_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_array_slot,
+      NGX_MAIL_SRV_CONF_OFFSET,
+      offsetof(ngx_mail_core_srv_conf_t, error_log_user_tags),
       NULL },
 
     { ngx_string("resolver"),
@@ -153,6 +165,16 @@ ngx_mail_core_create_main_conf(ngx_conf_t *cf)
         return NULL;
     }
 
+#define NGX_X(id, key, name)                                                  \
+    if (ngx_log_add_property(cf->cycle,                                       \
+                           &ngx_mail_log_properties[NGX_MAIL_LOG_PROP__##id]) \
+        != NGX_OK)                                                            \
+    {                                                                         \
+        return NULL;                                                          \
+    }
+    NGX_MAIL_LOG_PROP_LIST
+#undef NGX_X
+
     return cmcf;
 }
 
@@ -184,6 +206,8 @@ ngx_mail_core_create_srv_conf(ngx_conf_t *cf)
 
     cscf->file_name = cf->conf_file->file.name.data;
     cscf->line = cf->conf_file->line;
+
+    cscf->error_log_user_tags = NGX_CONF_UNSET_PTR;
 
     return cscf;
 }
@@ -224,6 +248,9 @@ ngx_mail_core_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     }
 
     ngx_conf_merge_ptr_value(conf->resolver, prev->resolver, NULL);
+
+    ngx_conf_merge_ptr_value(conf->error_log_user_tags,
+                             prev->error_log_user_tags, NULL);
 
     return NGX_CONF_OK;
 }

@@ -59,8 +59,8 @@ static ngx_int_t ngx_http_post_action(ngx_http_request_t *r);
 static void ngx_http_log_request(ngx_http_request_t *r);
 
 static u_char *ngx_http_log_error(ngx_log_t *log, u_char *buf, size_t len);
-static u_char *ngx_http_log_error_handler(ngx_http_request_t *r,
-    ngx_http_request_t *sr, u_char *buf, size_t len);
+static u_char *ngx_http_log_error_handler(ngx_log_t *log, u_char *buf,
+    u_char *last, void *data);
 
 #if (NGX_HTTP_SSL)
 static void ngx_http_ssl_handshake(ngx_event_t *rev);
@@ -4308,29 +4308,33 @@ ngx_http_close_connection(ngx_connection_t *c)
 static u_char *
 ngx_http_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    u_char              *p;
+    u_char              *p, *last;
     ngx_http_request_t  *r;
     ngx_http_log_ctx_t  *ctx;
 
+    p = buf;
+    last = buf + len;
+
+    ngx_log_add_tag(log, "http");
+
     if (log->action) {
-        p = ngx_snprintf(buf, len, " while %s", log->action);
-        len -= p - buf;
-        buf = p;
+        p = ngx_log_action(log, p, last, log->action);
     }
 
     ctx = log->data;
 
-    p = ngx_snprintf(buf, len, ", client: %V", &ctx->connection->addr_text);
-    len -= p - buf;
+    p = ngx_log_property(log, p, last, ngx_http_log_prop(CLIENT), "%V",
+                         &ctx->connection->addr_text);
 
     r = ctx->request;
 
     if (r) {
-        return r->log_handler(r, ctx->current_request, p, len);
+        p = ngx_log_object(log, p, last, ngx_http_log_prop(REQUEST),
+                           r->log_handler, ctx);
 
     } else {
-        p = ngx_snprintf(p, len, ", server: %V",
-                         &ctx->connection->listening->addr_text);
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(SERVER), "%V",
+                             &ctx->connection->listening->addr_text);
     }
 
     return p;
@@ -4338,46 +4342,75 @@ ngx_http_log_error(ngx_log_t *log, u_char *buf, size_t len)
 
 
 static u_char *
-ngx_http_log_error_handler(ngx_http_request_t *r, ngx_http_request_t *sr,
-    u_char *buf, size_t len)
+ngx_http_log_error_handler(ngx_log_t *log, u_char *buf, u_char *last,
+    void *data)
 {
+    ngx_http_log_ctx_t  *ctx = data;
+
     char                      *uri_separator;
-    u_char                    *p;
+    u_char                    *p, *ch;
+    ngx_str_t                  utag;
+    ngx_uint_t                 i;
+    ngx_http_request_t        *r, *sr;
     ngx_http_upstream_t       *u;
+    ngx_http_complex_value_t  *ucv;
     ngx_http_core_srv_conf_t  *cscf;
+    ngx_http_core_loc_conf_t  *clcf;
+
+    r = ctx->request;
+    sr = ctx->current_request;
 
     cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
-    p = ngx_snprintf(buf, len, ", server: %V", &cscf->server_name);
-    len -= p - buf;
-    buf = p;
+    if (clcf->error_log_user_tags) {
+
+        ucv = clcf->error_log_user_tags->elts;
+
+        for (i = 0; i < clcf->error_log_user_tags->nelts; i++) {
+
+            if (ngx_http_complex_value(r, &ucv[i], &utag) != NGX_OK) {
+                return buf;
+            }
+
+            ngx_log_add_str_tag(log, &utag);
+        }
+    }
+
+    p = ngx_log_property(log, buf, last, ngx_http_log_prop(SERVER), "%V",
+                         &cscf->server_name);
 
     if (r->request_line.data == NULL && r->request_start) {
-        for (p = r->request_start; p < r->header_in->last; p++) {
-            if (*p == CR || *p == LF) {
+        for (ch = r->request_start; ch < r->header_in->last; ch++) {
+            if (*ch == CR || *ch == LF) {
                 break;
             }
         }
 
-        r->request_line.len = p - r->request_start;
+        r->request_line.len = ch - r->request_start;
         r->request_line.data = r->request_start;
     }
 
     if (r->request_line.len) {
-        p = ngx_snprintf(buf, len, ", request: \"%V\"", &r->request_line);
-        len -= p - buf;
-        buf = p;
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(REQUEST), "%V",
+                             &r->request_line);
     }
 
     if (r != sr) {
-        p = ngx_snprintf(buf, len, ", subrequest: \"%V\"", &sr->uri);
-        len -= p - buf;
-        buf = p;
+        ngx_log_add_tag(log, "subrequest");
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(SUBREQUEST), "%V",
+                             &sr->uri);
     }
 
     u = sr->upstream;
 
+    if (u) {
+        ngx_log_add_tag(log, "upstream");
+    }
+
     if (u && u->peer.name) {
+
+        ngx_log_add_tag(log, "peer");
 
         uri_separator = "";
 
@@ -4387,27 +4420,22 @@ ngx_http_log_error_handler(ngx_http_request_t *r, ngx_http_request_t *sr,
         }
 #endif
 
-        p = ngx_snprintf(buf, len, ", upstream: \"%V%V%s%V\"",
-                         &u->schema, u->peer.name,
-                         uri_separator, &u->uri);
-        len -= p - buf;
-        buf = p;
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(UPSTREAM),
+                             "%V%V%s%V", &u->schema, u->peer.name,
+                             uri_separator, &u->uri);
     }
 
     if (r->headers_in.host) {
-        p = ngx_snprintf(buf, len, ", host: \"%V\"",
-                         &r->headers_in.host->value);
-        len -= p - buf;
-        buf = p;
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(HOST), "%V",
+                             &r->headers_in.host->value);
     }
 
     if (r->headers_in.referer) {
-        p = ngx_snprintf(buf, len, ", referrer: \"%V\"",
-                         &r->headers_in.referer->value);
-        buf = p;
+        p = ngx_log_property(log, p, last, ngx_http_log_prop(REFER), "%V",
+                             &r->headers_in.referer->value);
     }
 
-    return buf;
+    return p;
 }
 
 

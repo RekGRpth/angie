@@ -24,12 +24,44 @@ typedef struct ngx_http_v3_parse_s    ngx_http_v3_parse_t;
 typedef struct ngx_http_v3_session_s  ngx_http_v3_session_t;
 typedef struct ngx_http_v3_settings_s ngx_http_v3_settings_t;
 
+
+#if (NGX_HTTP_ACME)
+#define NGX_HAS_ACME(x) x
+#else
+#define NGX_HAS_ACME(x)
+#endif
+
+#define NGX_HTTP_LOG_PROP_LIST                                                \
+    NGX_X(CLIENT,      "client",      "client")                               \
+    NGX_X(SERVER,      "server",      "server")                               \
+    NGX_X(REQUEST,     "request",     "request")                              \
+    NGX_X(SUBREQUEST,  "subrequest",  "subrequest")                           \
+    NGX_X(UPSTREAM,    "upstream",    "upstream")                             \
+    NGX_X(HOST,        "host",        "host")                                 \
+    NGX_X(REFER,       "referrer",    "referrer")                             \
+    NGX_HAS_ACME(NGX_X(ACME_CLIENT, "acme_client", "ACME client"))
+
+enum {
+    #define NGX_X(id, key, name)  NGX_HTTP_LOG_PROP__##id,
+    NGX_HTTP_LOG_PROP_LIST
+    #undef NGX_X
+};
+
+extern ngx_log_property_t  ngx_http_log_properties[];
+
+#define ngx_http_log_prop(id)                                                 \
+    ((ngx_log_property_key_t)                                                 \
+     { ngx_http_log_properties[NGX_HTTP_LOG_PROP__##id].index })
+
+
 #if (NGX_API)
 typedef struct ngx_http_server_stats_s  ngx_http_server_stats_t;
 #endif
 
 typedef ngx_int_t (*ngx_http_header_handler_pt)(ngx_http_request_t *r,
     ngx_table_elt_t *h, ngx_uint_t offset);
+
+/* deprecated, use ngx_log_ext_handler_pt instead */
 typedef u_char *(*ngx_http_log_handler_pt)(ngx_http_request_t *r,
     ngx_http_request_t *sr, u_char *buf, size_t len);
 

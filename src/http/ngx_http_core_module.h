@@ -571,6 +571,8 @@ struct ngx_http_core_loc_conf_s {
 #if (NGX_API)
     ngx_http_status_zone_t  *status_zone;
 #endif
+
+    ngx_array_t            *error_log_user_tags; /* array of complex values */
 };
 
 

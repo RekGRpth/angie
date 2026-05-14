@@ -439,6 +439,7 @@ ngx_show_version_info(void)
             "             [-e filename] [-c filename] [-g directives]"
                           NGX_LINEFEED
             "             [--help] [--build-env] [--log-level=level]"
+            "             [--log-filters]"
                           NGX_LINEFEED NGX_LINEFEED
             "Options:" NGX_LINEFEED
             "  -?,-h,--help  : this help" NGX_LINEFEED
@@ -473,6 +474,7 @@ ngx_show_version_info(void)
                                "file" NGX_LINEFEED NGX_LINEFEED
 
             "  --build-env       : show build environment and exit" NGX_LINEFEED
+            "  --log-filters     : show log filters and exit" NGX_LINEFEED
             "  --log-level=level : set initial error log level (default: "
                                    "notice)" NGX_LINEFEED NGX_LINEFEED
         );
@@ -958,6 +960,11 @@ ngx_get_options(int argc, char *const *argv)
 
                 if (ngx_strcmp(p, "build-env") == 0) {
                     ngx_show_build_env = 1;
+                    goto next;
+                }
+
+                if (ngx_strcmp(p, "log-filters") == 0) {
+                    ngx_show_log_filters = 1;
                     goto next;
                 }
 

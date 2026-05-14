@@ -523,8 +523,17 @@ ngx_close_accepted_connection(ngx_connection_t *c)
 u_char *
 ngx_accept_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    return ngx_snprintf(buf, len, " while accepting new connection on %V",
-                        log->data);
+    u_char  *p, *last;
+
+    p = buf;
+    last = buf + len;
+
+    p = ngx_log_action(log, p, last, "accepting new connection");
+
+    p = ngx_log_property(log, p, last, ngx_core_log_prop(LISTEN_ADDR),
+                         "%V", log->data);
+
+    return p;
 }
 
 

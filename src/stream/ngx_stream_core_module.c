@@ -42,6 +42,8 @@ static void ngx_stream_stats_fix(ngx_stream_session_t *s,
 ngx_int_t ngx_api_stream_server_zones_handler(ngx_api_entry_data_t data,
     ngx_api_ctx_t *actx, void *ctx);
 #endif
+static char *ngx_stream_core_error_log_user_tag(ngx_conf_t *cf,
+    ngx_command_t *cmd, void *conf);
 
 
 static ngx_command_t  ngx_stream_core_commands[] = {
@@ -155,6 +157,13 @@ static ngx_command_t  ngx_stream_core_commands[] = {
 
 #endif
 
+    { ngx_string("error_log_user_tag"),
+      NGX_STREAM_MAIN_CONF|NGX_STREAM_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_stream_core_error_log_user_tag,
+      NGX_STREAM_SRV_CONF_OFFSET,
+      0,
+      NULL },
+
       ngx_null_command
 };
 
@@ -184,6 +193,13 @@ ngx_module_t  ngx_stream_core_module = {
     NULL,                                  /* exit process */
     NULL,                                  /* exit master */
     NGX_MODULE_V1_PADDING
+};
+
+
+ngx_log_property_t  ngx_stream_log_properties[] = {
+    #define NGX_X(id, key, name)  ngx_log_prop_decl(key, name, "stream"),
+    NGX_STREAM_LOG_PROP_LIST
+    #undef NGX_X
 };
 
 
@@ -765,6 +781,16 @@ ngx_stream_find_virtual_server(ngx_stream_session_t *s,
 static ngx_int_t
 ngx_stream_core_preconfiguration(ngx_conf_t *cf)
 {
+#define NGX_X(id, key, name)                                                  \
+    if (ngx_log_add_property(cf->cycle,                                       \
+                      &ngx_stream_log_properties[NGX_STREAM_LOG_PROP__##id])  \
+        != NGX_OK)                                                            \
+    {                                                                         \
+        return NGX_ERROR;                                                     \
+    }
+    NGX_STREAM_LOG_PROP_LIST
+#undef NGX_X
+
     return ngx_stream_variables_add_core_vars(cf);
 }
 
@@ -899,6 +925,7 @@ ngx_stream_core_create_srv_conf(ngx_conf_t *cf)
     cscf->tcp_nodelay = NGX_CONF_UNSET;
     cscf->preread_buffer_size = NGX_CONF_UNSET_SIZE;
     cscf->preread_timeout = NGX_CONF_UNSET_MSEC;
+    cscf->error_log_user_tags = NGX_CONF_UNSET_PTR;
 
     return cscf;
 }
@@ -985,6 +1012,9 @@ ngx_stream_core_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     if (conf->server_name.data == NULL) {
         return NGX_CONF_ERROR;
     }
+
+    ngx_conf_merge_ptr_value(conf->error_log_user_tags,
+                             prev->error_log_user_tags, NULL);
 
     return NGX_CONF_OK;
 }
@@ -1890,3 +1920,47 @@ ngx_stream_stats_fix(ngx_stream_session_t *s,
 }
 
 #endif
+
+
+static char *
+ngx_stream_core_error_log_user_tag(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf)
+{
+    ngx_stream_core_srv_conf_t  *cscf = conf;
+
+    ngx_str_t                           *value;
+    ngx_array_t                         *tags;
+    ngx_stream_complex_value_t          *cv;
+    ngx_stream_compile_complex_value_t   ccv;
+
+    value = cf->args->elts;
+
+    tags = cscf->error_log_user_tags;
+
+    if (tags == NGX_CONF_UNSET_PTR) {
+        tags = ngx_array_create(cf->pool, 4,
+                                sizeof(ngx_stream_complex_value_t));
+        if (tags == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        cscf->error_log_user_tags = tags;
+    }
+
+    cv = ngx_array_push(tags);
+    if (cv == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    ngx_memzero(&ccv, sizeof(ngx_stream_compile_complex_value_t));
+
+    ccv.cf = cf;
+    ccv.value = &value[1];
+    ccv.complex_value = cv;
+
+    if (ngx_stream_compile_complex_value(&ccv) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}

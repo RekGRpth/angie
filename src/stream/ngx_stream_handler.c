@@ -613,26 +613,52 @@ ngx_stream_close_connection(ngx_connection_t *c)
 static u_char *
 ngx_stream_log_error(ngx_log_t *log, u_char *buf, size_t len)
 {
-    u_char                *p;
-    ngx_stream_session_t  *s;
+    u_char                      *p, *last;
+    ngx_str_t                    utag;
+    ngx_uint_t                   i;
+    ngx_stream_session_t        *s;
+    ngx_stream_complex_value_t  *ucv;
+    ngx_stream_core_srv_conf_t  *cscf;
 
-    if (log->action) {
-        p = ngx_snprintf(buf, len, " while %s", log->action);
-        len -= p - buf;
-        buf = p;
-    }
+    p = buf;
+    last = buf + len;
 
     s = log->data;
 
-    p = ngx_snprintf(buf, len, ", %sclient: %V, server: %V",
-                     s->connection->type == SOCK_DGRAM ? "udp " : "",
-                     &s->connection->addr_text,
-                     &s->connection->listening->addr_text);
-    len -= p - buf;
-    buf = p;
+    ngx_log_add_tag(log, "stream");
+
+    cscf = ngx_stream_get_module_srv_conf(s, ngx_stream_core_module);
+
+    if (cscf->error_log_user_tags) {
+
+        ucv = cscf->error_log_user_tags->elts;
+
+        for (i = 0; i < cscf->error_log_user_tags->nelts; i++) {
+
+            if (ngx_stream_complex_value(s, &ucv[i], &utag) != NGX_OK) {
+                return buf;
+            }
+
+            ngx_log_add_str_tag(log, &utag);
+        }
+    }
+
+    if (log->action) {
+        p = ngx_log_action(log, p, last, log->action);
+    }
+
+    p = ngx_log_property(log, p, last, ngx_stream_log_prop(CLIENT), "%V",
+                         &s->connection->addr_text);
+
+    p = ngx_log_property(log, p, last, ngx_stream_log_prop(SERVER), "%V",
+                         &s->connection->listening->addr_text);
+
+    p = ngx_log_property(log, p, last, ngx_stream_log_prop(PROTOCOL), "%s",
+                         s->connection->type == SOCK_DGRAM ? "udp" : "tcp");
 
     if (s->log_handler) {
-        p = s->log_handler(log, buf, len);
+        p = ngx_log_object(log, p, last, ngx_stream_log_prop(SESSION),
+                           s->log_handler, s);
     }
 
     return p;
