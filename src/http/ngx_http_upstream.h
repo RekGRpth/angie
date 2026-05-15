@@ -257,6 +257,7 @@ typedef struct {
     unsigned                         intercept_404:1;
     unsigned                         change_buffering:1;
     unsigned                         preserve_output:1;
+    unsigned                         ignore_input:1;
 
 #if (NGX_HTTP_SSL || NGX_COMPAT)
     ngx_ssl_t                       *ssl;
@@ -294,7 +295,7 @@ typedef struct {
     ngx_http_v3_settings_t           h3_settings;
 #endif
 
-    NGX_COMPAT_BEGIN(6)
+    NGX_COMPAT_BEGIN(5)
     NGX_COMPAT_END
 } ngx_http_upstream_conf_t;
 

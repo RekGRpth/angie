@@ -272,7 +272,7 @@ sub metric_update {
 			$cache->[$index] = [$value, time()];
 
 			my ($sum, $count) = (0, 0);
-			my $current_time = time() - 60 * $node->{args}{window};
+			my $current_time = time() - $node->{args}{window};
 
 			if ($node->{args}{window} != 0) {
 

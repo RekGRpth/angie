@@ -14,7 +14,7 @@ fi
 
 
 NGX_GCC_VER=`$CC -v 2>&1 | grep 'gcc version' 2>&1 \
-                         | sed -e 's/^.* version \(.*\)/\1/'`
+                         | sed -n -e 's/^gcc version \(.*\)/\1/p'`
 
 echo " + gcc version: $NGX_GCC_VER"
 

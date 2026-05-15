@@ -2023,7 +2023,7 @@ done:
 
     ngx_memzero(mctx->sh, sizeof(ngx_http_metric_shctx_t));
 
-    mctx->shpool->data = &mctx->sh;
+    mctx->shpool->data = mctx->sh;
 
     ngx_rbtree_init(&mctx->sh->rbtree, &mctx->sh->sentinel,
                     ngx_metric_rbtree_insert_value);
@@ -3435,7 +3435,7 @@ ngx_http_metric_count_get(ngx_http_metric_state_ctx_t *sctx, void **pos,
 
     p = buf->data;
 
-    buf->data = ngx_sprintf(p, "%ui", *data);
+    buf->data = ngx_sprintf(p, "%uL", *data);
     buf->len += buf->data - p;
 
     *pos = ++data;
@@ -4353,7 +4353,7 @@ ngx_http_metric_hist_get(ngx_http_metric_state_ctx_t *sctx, void **pos,
     i = 0;
 
     for ( ;; ) {
-        size = ngx_sprintf(buf->data, "%ui", data[i]) - buf->data;
+        size = ngx_sprintf(buf->data, "%uL", data[i]) - buf->data;
 
         buf->len += size;
         buf->data += size;

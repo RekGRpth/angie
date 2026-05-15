@@ -622,7 +622,9 @@ typedef struct {
 } ngx_http_ephemeral_t;
 
 
-#define ngx_http_ephemeral(r)  (void *) (&r->uri_start)
+#define ngx_http_ephemeral(r)   (void *) (&r->uri_start)
+
+#define ngx_http_proxy_auth(r)  ((r)->method == NGX_HTTP_CONNECT)
 
 ngx_str_t *ngx_http_status_line(ngx_uint_t status);
 ngx_int_t ngx_http_request_add_header(ngx_http_request_t *r, u_char *name,

@@ -2540,6 +2540,11 @@ ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u,
             return;
         }
 
+        if (u->conf->ignore_input) {
+            ngx_http_upstream_process_header(r, u);
+            return;
+        }
+
         ngx_add_timer(c->read, u->conf->read_timeout);
 
         if (c->read->ready) {
@@ -2847,6 +2852,11 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
 #endif
     }
 
+    if (u->conf->ignore_input) {
+        rc = u->process_header(r);
+        goto done;
+    }
+
     for ( ;; ) {
 
         if (c->read->ready) {
@@ -2925,6 +2935,8 @@ again:
 
         break;
     }
+
+done:
 
     if (rc == NGX_HTTP_UPSTREAM_INVALID_HEADER) {
         ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_INVALID_HEADER);
