@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 
-# (C) 2025 Web Server LLC
+# (C) 2026 Web Server LLC
 
-# Tests for http_metric module.
+# Tests for stream_metric module.
 
 ###############################################################################
 
@@ -17,6 +17,7 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
 use Test::Nginx;
+use Test::Nginx::Stream qw/ stream /;
 use Test::Utils qw/ get_json /;
 
 ###############################################################################
@@ -26,7 +27,7 @@ use constant 'TOLERANCE' => 1e-6;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http http_api http_metric rewrite/);
+my $t = Test::Nginx->new()->has(qw/stream stream_metric stream_return/);
 
 my $conf = <<'EOF'
 
@@ -39,10 +40,18 @@ events {
 
 worker_processes 4;
 
-http {
-    %%TEST_GLOBALS_HTTP%%
+stream {
+    %%TEST_GLOBALS_STREAM%%
 
-    variables_hash_bucket_size 128;
+    variables_hash_bucket_size 1024;
+
+    map $proxy_protocol_tlv_0xe0 $key {
+        default $proxy_protocol_tlv_0xe0;
+    }
+
+    map $proxy_protocol_tlv_0xe1 $value {
+        default $proxy_protocol_tlv_0xe1;
+    }
 
     metric_zone reload_inline:128k count;
 
@@ -73,16 +82,116 @@ http {
     metric_zone var:128k count;
     metric_zone var2:128k last;
     metric_zone var3:128k last;
-    metric_zone stage1:128k last;
-    metric_zone stage2:128k last;
-    metric_zone stage3:128k last;
-    metric_zone stage_redirect:128k count;
 
     metric_complex_zone complex_var:128k {
         count count;
         avg   average mean count=40;
         hist  histogram 1 2 3 10 11 12 13 14 15 16 17 18 19 20 21 22 23 34 90;
     }
+
+    server {
+        listen 127.0.0.1:%%PORT_8090%% proxy_protocol;
+        set $metric_reload_inline  $key=$value;
+        set $metric_reload_complex $key=$value;
+        return "$metric_reload_inline;$metric_reload_complex";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8091%% proxy_protocol;
+        set $metric_var $key;
+        return "$metric_var;$metric_var_key;$metric_var_value";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8092%% proxy_protocol;
+        set $metric_var $key=$value;
+        return "$metric_var;$metric_var_key;$metric_var_value";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8093%% proxy_protocol;
+        set $metric_var_key   $key;
+        set $metric_var_value $value;
+        return "$metric_var;$metric_var_key;$metric_var_value";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8094%% proxy_protocol;
+        set $metric_counter $key;
+        return $metric_counter_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8095%% proxy_protocol;
+        set $metric_min $key=$value;
+        return $metric_min_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8096%% proxy_protocol;
+        set $metric_max $key=$value;
+        return $metric_max_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8097%% proxy_protocol;
+        set $metric_last $key=$value;
+        return $metric_last_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8098%% proxy_protocol;
+        set $metric_gauge $key=$value;
+        return $metric_gauge_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8099%% proxy_protocol;
+        set $metric_avg0 avg1_base=$value;
+        set $metric_avg1 count=$value;
+        return "$metric_avg0_value;$metric_avg1_value";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8100%% proxy_protocol;
+        set $metric_avg0 avg2_base=$value;
+        set $metric_avg2 window=$value;
+        return "$metric_avg0_value;$metric_avg2_value";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8101%% proxy_protocol;
+        set $metric_avg_exp1 $key=$value;
+        return $metric_avg_exp1_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8102%% proxy_protocol;
+        set $metric_avg_exp2 $key=$value;
+        return $metric_avg_exp2_value;
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8103%% proxy_protocol;
+        set $metric_hist1 $key=$value;
+        set $metric_hist2 $key=$value;
+        return "$metric_hist1_value;$metric_hist2_value";
+    }
+
+    server {
+        listen 127.0.0.1:%%PORT_8104%% proxy_protocol;
+        set $metric_complex_var_key   $key;
+        set $metric_complex_var_value $value;
+        return "$metric_complex_var_value";
+    }
+EOF
+;
+
+if ($t->has_module('http_api')) {
+	$conf .= <<'EOF'
+
+    metric_zone stage1:128k last;
+    metric_zone stage3:128k last;
 
     metric_complex_zone block0:128k {
         count count;
@@ -153,199 +262,114 @@ http {
     }
 
     server {
-        listen 127.0.0.1:8080;
+        listen 127.0.0.1:%%PORT_8105%% proxy_protocol;
+        metric stage1 $key=$bytes_sent on=connect;
+        return "some_data";
+    }
 
-        location ~ /reload/(.+)/(.+)$ {
-            metric reload_inline  $1=$2;
-            metric reload_complex $1=$2;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8106%% proxy_protocol;
+        metric stage1 $key=$connection on=connect;
+        return "some_data";
+    }
+EOF
+;
 
-        location ~ /key_value/(.+)$ {
-            set $metric_var $1;
-            return 200 "$metric_var;$metric_var_key;$metric_var_value";
-        }
+	if ($t->has_module('stream_mqtt_preread')) {
+		$conf .= <<'EOF'
 
-        location ~ /var1/(.+)/(.+)$ {
-            set $metric_var $1=$2;
-            return 200 "$metric_var;$metric_var_key;$metric_var_value";
-        }
+    metric_zone stage2:128k last;
 
-        location ~ /var2/(.+)/(.*)$ {
-            set $metric_var_key   $1;
-            set $metric_var_value $2;
-            return 200 "$metric_var;$metric_var_key;$metric_var_value";
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8107%%;
+        mqtt_preread on;
+        metric stage2 $mqtt_preread_clientid=1 on=preread;
+        return "$mqtt_preread_clientid $metric_stage2";
+    }
+EOF
+;
+    }
 
-        location ~ /var3/(.+)/(.*)$ {
-            set $metric_var_key    $1;
-            set $metric_var_value  $2;
+	$conf .= <<'EOF'
 
-            set $metric_var2_key   $1;
-            set $metric_var2_value $2;
+    server {
+        listen 127.0.0.1:%%PORT_8108%% proxy_protocol;
+        metric stage3 $key=$bytes_sent on=end;
+        return "some_data";
+    }
 
-            set $metric_var   angie=1;
-            set $metric_var_value  $2;
+    server {
+        listen 127.0.0.1:%%PORT_8109%% proxy_protocol;
+        metric block0 $key=$value on=connect;
+    }
 
-            set $metric_var_key    $1;
+    server {
+        listen 127.0.0.1:%%PORT_8110%% proxy_protocol;
+        metric block_large_slabs $key=$value;
+    }
 
-            set $metric_var3_key   bar;
-            set $metric_var3_value 10$2;
+    server {
+        listen 127.0.0.1:%%PORT_8111%% proxy_protocol;
+        metric block1 $key=$value;
+    }
 
-            return 200 "$metric_var:$metric_var_key=$metric_var_value
-$metric_var2:$metric_var2_key=$metric_var2_value
-$metric_var3:$metric_var3_key=$metric_var3_value";
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8112%% proxy_protocol;
+        set $metric_block2 $key=$value;
+    }
 
-        location /stage/request1/ {
-            metric stage1 $request_completion=$bytes_sent on=request;
-            api /status/http/metric_zones/stage1;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8113%% proxy_protocol;
+        set $metric_block1_key $key;
+        return "$metric_block1_value_count";
+    }
 
-        location /stage/request2/ {
-            metric stage1 angie=$request_length on=request;
-            api /status/http/metric_zones/stage1;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8114%% proxy_protocol;
+        set $metric_block1_key $key;
+        return "$metric_block1_value_min";
+    }
 
-        location /stage/response/ {
-            metric stage2 angie=$request_length on=response;
-            api /status/http/metric_zones/stage2;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8115%% proxy_protocol;
+        set $metric_block1_key $key;
+        return "$metric_block1_value_max";
+    }
 
-        location /stage/end/ {
-            metric stage3 $request_completion=$bytes_sent on=end;
-            api /status/http/metric_zones/stage3;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8116%% proxy_protocol;
+        set $metric_block1_key $key;
+        return "$metric_block1_value_last";
+    }
 
-        location /counter/ {
-            metric counter counter;
-            return 200 OK;
-        }
-        location /counter/request/ {
-            metric counter counter1 on=request;
-            return 200 OK;
-        }
-        location /counter/response/ {
-            metric counter counter2 on=response;
-            return 200 OK;
-        }
-        location /counter/end/ {
-            metric counter counter3 on=end;
-            return 200 OK;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8117%% proxy_protocol;
+        set $metric_block1_key $key;
+        return "$metric_block1_value_hist";
+    }
 
-        location ~ ^/min/(.+)$ {
-            metric min angie=$1;
-            return 200 OK;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8118%% proxy_protocol;
+        set $metric_block1_key $key;
+        return "$metric_block1_value_gauge";
+    }
 
-        location ~ ^/max/(.+)$ {
-            metric max angie=$1;
-            return 200 OK;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8119%% proxy_protocol;
+        set $metric_block3_key    $key;
+        set $metric_block3_value  $value;
+    }
 
-        location ~ ^/last/(.+)$ {
-            metric last angie=$1;
-            return 200 OK;
-        }
+    server {
+        listen 127.0.0.1:%%PORT_8120%% proxy_protocol;
+        metric block4 $key=$value on=preread;
+        return "ok";
+    }
+}
 
-        location ~ ^/gauge/(.+)$ {
-            metric gauge angie=$1;
-            return 200 OK;
-        }
-
-        location ~ ^/avg1/(.+)$ {
-            metric avg0 avg1_base=$1;
-            metric avg1 count=$1;
-            return 200 OK;
-        }
-
-        location ~ ^/avg2/(.+)$ {
-            metric avg0 avg2_base=$1;
-            metric avg2 window=$1;
-            return 200 OK;
-        }
-
-        location ~ ^/avg_exp1/(.+)$ {
-            metric avg_exp1 angie=$1;
-            return 200 OK;
-        }
-
-        location ~ ^/avg_exp2/(.+)$ {
-            metric avg_exp2 angie=$1;
-            return 200 OK;
-        }
-
-        location ~ ^/hist/(.+)$ {
-            metric hist1 angie=$1;
-            metric hist2 angie=$1;
-            return 200 OK;
-        }
-
-        location ~ ^/block0/(.+)/(.*)$ {
-            metric block0 $1=$2 on=request;
-            api /status/http/metric_zones/block0/metrics/$1;
-        }
-
-        location ~ ^/block_large_slabs/(.*)$ {
-            metric block_large_slabs angie=$1;
-        }
-
-        location ~ ^/complex_var/(.+)$ {
-            set $metric_complex_var_key "angie";
-            set $metric_complex_var_value $1;
-            return 200 "value=$metric_complex_var_value";
-        }
-
-        location ~ ^/block1/(.+)/(.*)$ {
-            metric block1 $1=$2 on=request;
-            api /status/http/metric_zones/block1/metrics/$1;
-        }
-
-        location /var/block1/count/ {
-            set $metric_block1_key expired;
-            return 200 "value=$metric_block1_value_count";
-        }
-
-        location /var/block1/min/ {
-            set $metric_block1_key expired;
-            return 200 "value=$metric_block1_value_min";
-        }
-
-        location /var/block1/max/ {
-            set $metric_block1_key expired;
-            return 200 "value=$metric_block1_value_max";
-        }
-
-        location /var/block1/last/ {
-            set $metric_block1_key expired;
-            return 200 "value=$metric_block1_value_last";
-        }
-
-        location /var/block1/hist/ {
-            set $metric_block1_key expired;
-            return 200 "value=$metric_block1_value_hist";
-        }
-
-        location /var/block1/gauge/ {
-            set $metric_block1_key expired;
-            return 200 "value=$metric_block1_value_gauge";
-        }
-
-        location ~ ^/block2/(.+)/(.*)$ {
-            set $metric_block2 $1=$2;
-            api /status/http/metric_zones/block2/metrics/$1;
-        }
-
-        location ~ ^/block3/(.+)/(.*)$ {
-            set $metric_block3_key $1;
-            set $metric_block3_value $2;
-            api /status/http/metric_zones/block3/metrics/$1;
-        }
-
-        location ~ ^/block4/(.+)/(.*)$ {
-            metric block4 $1=$2 on=request;
-            api /status/http/metric_zones/block4/metrics/$1;
-        }
+http {
+    server {
+        listen 127.0.0.1:%%PORT_8080%%;
 
         location /api/ {
             allow 127.0.0.1;
@@ -355,51 +379,14 @@ $metric_var3:$metric_var3_key=$metric_var3_value";
                 api /status/;
             }
 
-            api /status/http/metric_zones/;
+            api /status/stream/metric_zones/;
         }
-
-EOF
-;
-
-if ($t->has_module('image_filter')) {
-	$conf .= <<'EOF'
-        location /error {
-            metric stage_redirect err_req on=request;
-            metric stage_redirect err_res on=response;
-            metric stage_redirect err_end on=end;
-
-            add_header Content-Type text/plain;
-            return 200 "error\n";
-        }
-
-        location /redirect1/ {
-            error_page 415 = /error;
-            alias %%TESTDIR%%/;
-
-            metric stage_redirect ok_req on=request;
-            metric stage_redirect ok_res on=response;
-            metric stage_redirect ok_end on=end;
-
-            image_filter resize 100000 100000;
-        }
-
-        location /redirect2/ {
-            error_page 415 = /error;
-            alias %%TESTDIR%%/;
-
-            metric stage_redirect ok_req on=request;
-            metric stage_redirect ok_res on=response;
-            metric stage_redirect ok_end on=end;
-
-            image_filter resize 100000 100000;
-
-            return 200 "ok\n";
-        }
+    }
 EOF
 ;
 }
 
-$conf .= "    }\n}";
+$conf .= "}";
 
 $t->write_file_expand('nginx.conf', $conf);
 
@@ -409,9 +396,12 @@ $t->run();
 
 my %test_cases = (
 	'api metric tree' => sub {
+		plan(skip_all => 'no http api')
+			unless $t->has_module('http_api');
+
 		my $res = get_json('/api/status/');
 		cmp_deeply(
-			$res->{http}{metric_zones},
+			$res->{stream}{metric_zones},
 			superhashof({}),
 			'api metric tree'
 		);
@@ -423,8 +413,8 @@ my %test_cases = (
 
 		ok($t->reload(), 'reload 1');
 
-		http_get('/reload/angie/1');
-		http_get('/reload/angie/2');
+		metric_send(8090, 'angie', 1);
+		metric_send(8090, 'angie', 2);
 
 		ok($t->reload(), 'reload 2');
 
@@ -434,82 +424,58 @@ my %test_cases = (
 		$t->write_file('nginx.conf', $new_conf);
 		ok($t->reload(), 'reload metric zone size 1');
 
-		http_get('/reload/angie/1');
-
-		is(get_json('/api/reload_inline/metrics/angie/'), 1,
+		like(metric_send(8090, 'angie', 1), qr/angie=1;/,
 			'reload metric zone size 2');
 
 		$new_conf =~ s/reload_inline:256k count/reload_inline:256k gauge/;
 		$t->write_file('nginx.conf', $new_conf);
 		ok($t->reload(), 'reload metric mode 1');
 
-		my $res = get_json('/api/reload_inline/metrics');
+		like(metric_send(8090, 'angie', 1), qr/angie=1;angie=4/,
+			'reload metric mode');
 
-		ok(!exists $res->{angie}, 'reload metric mode 2');
-
-		is(get_json('/api/reload_complex/metrics/angie/1/'), 3,
-			'reload metric mode 3');
-
-		http_get('/reload/angie/10');
-		http_get('/reload/angie/10');
+		metric_send(8090, 'angie', 10);
+		metric_send(8090, 'angie', 10);
 
 		$new_conf =~ s/# 4 gauge/4 gauge/;
 		$t->write_file('nginx.conf', $new_conf);
 		ok($t->reload(), 'reload metrics count 1');
 
-		$res = get_json('/api/reload_complex/metrics');
+		like(metric_send(8090, 'angie', 1), qr/angie=22;angie=1/,
+			'reload metric count 2');
 
-		ok(!exists $res->{angie}, 'reload metrics count 2');
-
-		is(get_json('/api/reload_inline/metrics/angie/'), 20,
-			'reload metrics count 3');
-
-		http_get('/reload/angie/10');
-		http_get('/reload/angie/10');
+		metric_send(8090, 'angie', 10);
+		metric_send(8090, 'angie', 10);
 
 		$new_conf =~ s/count=5/count=9/;
 		$t->write_file('nginx.conf', $new_conf);
 		ok($t->reload(), 'reload average mean count 1');
 
-		$res = get_json('/api/reload_complex/metrics');
+		like(metric_send(8090, 'angie', 1), qr/angie=43;angie=1/,
+			'reload average mean count 2');
 
-		ok(!exists $res->{angie}, 'reload average mean count 2');
+		metric_send(8090, 'angie', 10);
+		metric_send(8090, 'angie', 10);
 
-		is(get_json('/api/reload_inline/metrics/angie/'), 40,
-			'reload average mean count 3');
-
-		http_get('/reload/angie/10');
-		http_get('/reload/angie/10');
-
-		$new_conf =~ s/window=off/window=99h/;
+		$new_conf =~ s/window=off/window=99m/;
 		$t->write_file('nginx.conf', $new_conf);
 		ok($t->reload(), 'reload average mean window 1');
 
-		$res = get_json('/api/reload_complex/metrics');
+		like(metric_send(8090, 'angie', 1), qr/angie=64;angie=1/,
+			'reload average mean window 2');
 
-		ok(!exists $res->{angie}, 'reload average mean window 2');
-
-		is(get_json('/api/reload_inline/metrics/angie/'), 60,
-			'reload average mean window 3');
-
-		http_get('/reload/angie/10');
-		http_get('/reload/angie/10');
+		metric_send(8090, 'angie', 10);
+		metric_send(8090, 'angie', 10);
 
 		$new_conf =~ s/3 histogram 1 2 3/3 histogram 1 2 3 4 5/;
 		$t->write_file('nginx.conf', $new_conf);
 		ok($t->reload(), 'reload histogram 1');
 
-		$res = get_json('/api/reload_complex/metrics');
+		like(metric_send(8090, 'angie', 1),
+			qr/angie=85;angie=1, 1, 1 1 1 1 1, 1/,
+			'reload histogram 2');
 
-		ok(!exists $res->{angie}, 'reload histogram 2');
-
-		http_get('/reload/angie/1');
-
-		is(get_json('/api/reload_inline/metrics/angie/'), 81,
-			'reload histogram 3');
-
-		is(get_json('/api/reload_complex/metrics/angie/2/'), 1,
-			'reload 3');
+		ok($t->reload(), 'reload 3');
 
 		SKIP: {
 
@@ -532,121 +498,60 @@ my %test_cases = (
 	},
 
 	'key value' => sub {
-		like(http_get("/key_value/key==1"),    qr/^key==1;key=;1$/m,
+		like(metric_send(8091, "key==1", 0),    qr/^key==1;key=;1$/m,
 			'key value 1');
-		like(http_get("/key_value/key==10"),   qr/^key==2;key=;2$/m,
+		like(metric_send(8091, "key==10", 0),   qr/^key==2;key=;2$/m,
 			'key value 2');
-		like(http_get("/key_value/k=e=y==1"),  qr/^k=e=y==1;k=e=y=;1$/m,
+		like(metric_send(8091, "k=e=y==1", 0),  qr/^k=e=y==1;k=e=y=;1$/m,
 			'key value 3');
-		like(http_get("/key_value/=k=e=y==1"), qr/^=k=e=y==1;=k=e=y=;1$/m,
+		like(metric_send(8091, "=k=e=y==1", 0), qr/^=k=e=y==1;=k=e=y=;1$/m,
 			'key value 4');
-		like(http_get("/key_value/==1"), qr/^==1;=;1$/m,
-			'key value 5');
-		like(http_get("/key_value/=1"),  qr/^;;$/m, 'key value 6');
-		like(http_get("/key_value/="),   qr/^;;$/m, 'key value 7');
-		like(http_get("/key_value/key"), qr/^key=1;key;1$/m, 'key value 8');
+		like(metric_send(8091, "==1", 0), qr/^==1;=;1$/m, 'key value 5');
+		like(metric_send(8091, "=1", 0),  qr/^;;$/m, 'key value 6');
+		like(metric_send(8091, "=", 0),   qr/^;;$/m, 'key value 7');
+		like(metric_send(8091, "key", 0), qr/^key=1;key;1$/m, 'key value 8');
 	},
 
 	'variables' => sub {
-		like(http_get("/var1/angie/tt"),  qr/^angie=1;angie;1$/m,
+		like(metric_send(8092, 'angie', "tt"), qr/^angie=1;angie;1$/m,
 			'variables 1 - 1');
-		like(http_get("/var1/angie/-1"),  qr/^angie=2;angie;2$/m,
+		like(metric_send(8092, 'angie', -1),   qr/^angie=2;angie;2$/m,
 			'variables 1 - 2');
-		like(http_get("/var1/angie/0.1"), qr/^angie=3;angie;3$/m,
+		like(metric_send(8092, 'angie', 0.01), qr/^angie=3;angie;3$/m,
 			'variables 1 - 3');
-		like(http_get("/var1/foo/11"),    qr/^foo=1;foo;1$/m,
+		like(metric_send(8092, 'foo', 548),    qr/^foo=1;foo;1$/m,
 			'variables 1 - 4');
-		like(http_get("/var1/foo/0"),     qr/^foo=2;foo;2$/m,
+		like(metric_send(8092, 'foo', 0),      qr/^foo=2;foo;2$/m,
 			'variables 1 - 5');
 
-		like(http_get("/var2/angie/tt"),  qr/^angie=4;angie;4$/m,
+		like(metric_send(8093, 'angie', "t0"), qr/^angie=4;angie;4$/m,
 			'variables 2 - 1');
-		like(http_get("/var2/angie/-1"),  qr/^angie=5;angie;5$/m,
-			'variables 2 - 2');
-		like(http_get("/var2/angie/0.1"), qr/^angie=6;angie;6$/m,
-			'variables 2 - 3');
-		like(http_get("/var2/foo/11"),    qr/^foo=3;foo;3$/m,
-			'variables 2 - 4');
-		like(http_get("/var2/foo/0"),     qr/^foo=4;foo;4$/m,
-			'variables 2 - 5');
-
-		like(http_get("/var3/foo/1"),
-			qr/^foo=5:foo=5\nfoo=1:foo=1\nbar=101:bar=101$/m,
-			'variables 3 - 1');
-		like(http_get("/var3/foo/2"),
-			qr/^foo=6:foo=6\nfoo=2:foo=2\nbar=102:bar=102$/m,
-			'variables 3 - 2');
-		like(http_get("/var3/foo/3"),
-			qr/^foo=7:foo=7\nfoo=3:foo=3\nbar=103:bar=103$/m,
-			'variables 3 - 3');
-	},
-
-	'stage' => sub {
-		like(http_get('/stage/request1/'), qr/{}/,
-			'stage request 1');
-		like(http_get('/stage/request2/'), qr/"angie":\s\d+/,
-			'stage request 2');
-
-		like(http_get('/stage/response/'), qr/{}/, 'stage response');
-
-		like(http_get('/stage/end/'), qr/{}/,
-			'stage end 1');
-		like(http_get('/api/stage3/'),      qr/"OK":\s\d+/,
-			'stage end 2');
-
-	SKIP: {
-		skip 'no image filter', 2 if not $t->has_module('image_filter');
-
-		$t->write_file('test', 'angie');
-
-		http_get('/redirect1/test');
-		my $res = get_json('/api/stage_redirect/metrics/');
-
-		cmp_deeply(
-			$res,
-			{
-				ok_req => 1,
-				err_res => 1,
-				err_end => 1
-			},
-			'stage redirect 1'
-		) or diag(explain({got => $res}));
-
-		http_get('/redirect2/test');
-		$res = get_json('/api/stage_redirect/metrics/');
-
-		cmp_deeply(
-			$res,
-			{
-				ok_req => 2,
-				err_res => 2,
-				err_end => 2
-			},
-			'stage redirect 2'
-		) or diag(explain({got => $res}));
-	}
+		like(metric_send(8093, 'angie', 65),   qr/^angie=5;angie;5$/m,
+			'variables 2 - 1');
+		like(metric_send(8093, 'angie', 0.1),  qr/^angie=6;angie;6$/m,
+			'variables 2 - 1');
+		like(metric_send(8093, 'foo', 7),      qr/^foo=3;foo;3$/m,
+			'variables 2 - 1');
+		like(metric_send(8093, 'foo', 0),      qr/^foo=4;foo;4$/m,
+			'variables 2 - 1');
 	},
 
 	'mode counter' => sub {
+		my $res;
+
 		my $n = int(rand 10) + 1;
 
-		for (1 .. $n) {
-			http_get('/counter/');
-			http_get('/counter/request/');
-			http_get('/counter/response/');
-			http_get('/counter/end/');
+		for (0 .. $n) {
+			$res = metric_send(8094, 'counter', 0);
 		}
 
-		my $api_res = get_json('/api/counter/metrics');
-		is($api_res->{counter}, $n, 'mode counter - default "on" (end)');
-		ok(defined $api_res->{counter1}, 'mode counter - on=request');
-		ok(defined $api_res->{counter2}, 'mode counter - on=response');
-		is($api_res->{counter3}, $n, 'mode counter - on=end');
+		is($res, $n + 1, 'mode counter');
 	},
 
 	'mode min' => sub {
 		my $n = int(rand 10) + 1;
 
+		my $res;
 		my $min = 99999;
 
 		for (1 .. $n) {
@@ -656,15 +561,16 @@ my %test_cases = (
 				$min = $v;
 			}
 
-			http_get("/min/$v");
+			$res = metric_send(8095, 'angie', $v);
 		}
 
-		is(get_json('/api/min/metrics/angie'), $min, 'mode min');
+		is($res, $min, 'mode min');
 	},
 
 	'mode max' => sub {
 		my $n = int(rand 10) + 1;
 
+		my $res;
 		my $max = -99999;
 
 		for (1 .. $n) {
@@ -674,27 +580,30 @@ my %test_cases = (
 				$max = $v;
 			}
 
-			http_get("/max/$v");
+			$res = metric_send(8096, 'angie', $v);
 		}
 
-		is(get_json('/api/max/metrics/angie'), $max, 'mode max');
+		is($res, $max, 'mode max');
 	},
 
 	'mode last' => sub {
 		my $n = int(rand 10) + 1;
 
 		my $v;
+		my $res;
+
 		for (1 .. $n) {
 			$v = int(rand 100) - int(rand 100);
-			http_get("/last/$v");
+			$res = metric_send(8097, 'angie', $v);
 		}
 
-		is(get_json('/api/last/metrics/angie'), $v, 'mode last');
+		is($res, $v, 'mode last');
 	},
 
 	'mode gauge' => sub {
 		my $n = int(rand 10) + 1;
 
+		my $res;
 		my $gauge = 0;
 
 		for (1 .. $n) {
@@ -702,15 +611,16 @@ my %test_cases = (
 
 			$gauge += $v;
 
-			http_get("/gauge/$v");
+			$res = metric_send(8098, 'angie', $v);
 		}
 
-		is(get_json('/api/gauge/metrics/angie'), $gauge, 'mode gauge');
+		is($res, $gauge, 'mode gauge');
 	},
 
 	'mode avg (count)' => sub {
 		my @vals;
 
+		my @res;
 		my $n = int(rand 10) + 3;
 
 		for my $i (1 .. $n) {
@@ -722,10 +632,10 @@ my %test_cases = (
 			my $j = $i < 3  ? $i : 3;
 			my $k = $i < 10 ? $i : 10;
 
-			http_get("/avg1/$v");
+			@res = split(';', metric_send(8099, 'angie', $v));
 
-			my $res_base  = get_json('/api/avg0/metrics/avg1_base');
-			my $res_count = get_json('/api/avg1/metrics/count');
+			my $res_base  = $res[0];
+			my $res_count = $res[1];
 
 			my $avg_base  = sum(@vals[-$k .. -1]) / $k;
 			my $avg_count = sum(@vals[-$j .. -1]) / $j;
@@ -741,79 +651,70 @@ my %test_cases = (
 		my $v1 = rand(1000) - rand(1000);
 		my $v2 = rand(1000) - rand(1000);
 
-		http_get("/avg2/$v1");
-		http_get("/avg2/$v2");
-
 		my $avg = ($v1 + $v2) / 2;
 
-		my $avg_base = get_json('/api/avg0/metrics/avg2_base');
+		metric_send(8100, '', $v1);
+		my @res = split(';', metric_send(8100, '', $v2));
 
-		cmp_deeply($avg_base, num($avg, TOLERANCE), 'mode avg (base) 1');
-		is($avg_base, get_json('/api/avg2/metrics/window'),
-			'mode avg (window) 1');
+		cmp_deeply($res[0], num($avg, TOLERANCE), 'mode avg (base) 1');
+		is($res[0], $res[1], 'mode avg (window) 1');
 
 		# window=1s
 		select undef, undef, undef, 1.5;
 
 		my $v3 = rand(1000) - rand(1000);
-		http_get("/avg2/$v3");
-
 		$avg = ($v1 + $v2 + $v3) / 3;
 
-		$avg_base = get_json('/api/avg0/metrics/avg2_base');
+		@res = split(';', metric_send(8100, '', $v3));
 
-		cmp_deeply($avg_base, num($avg, TOLERANCE), 'mode avg (base) 2');
-		isnt($avg_base, get_json('/api/avg2/metrics/window'),
-			'mode avg (window) 2');
+		cmp_deeply($res[0], num($avg, TOLERANCE), 'mode avg (base) 2');
+		isnt($res[0], $res[1], 'mode avg (window) 2');
 	},
 
 	'mode avg exp' => sub {
+		my $res;
+
 		my $tmp = rand(100) - rand(100);
-		http_get("/avg_exp1/$tmp");
+		metric_send(8101, 'angie', $tmp);
 
 		for (1 .. 3) {
 			my $v = rand(100) - rand(100);
 
-			http_get("/avg_exp1/$v");
+			$res = metric_send(8101, 'angie', $v);
 
 			# factor=80
 			$tmp += 0.8 * ($v - $tmp);
 		}
 
-		cmp_deeply(
-			get_json('/api/avg_exp1/metrics/angie'),
-			num($tmp, TOLERANCE),
-			'mode avg exp 1'
-		);
+		cmp_deeply($res, num($tmp, TOLERANCE), 'mode avg exp 1');
 
 		$tmp = rand(100) - rand(100);
-		http_get("/avg_exp2/$tmp");
+		metric_send(8102, 'angie', $tmp);
 
 		for (1 .. 3) {
 			my $v = rand(100) - rand(100);
 
-			http_get("/avg_exp2/$v");
+			$res = metric_send(8102, 'angie', $v);
 
 			# factor=20
 			$tmp += 0.2 * ($v - $tmp);
 		}
 
-		cmp_deeply(
-			get_json('/api/avg_exp2/metrics/angie'),
-			num($tmp, TOLERANCE),
-			'mode avg exp 2'
-		);
+		cmp_deeply($res, num($tmp, TOLERANCE), 'mode avg exp 2');
 	},
 
 	'mode hist' => sub {
-		my @buckets = (0.1, 2, 5,  8, 10, 'inf');
+		my @buckets = (0.1, 2, 5, 8, 10, 'inf');
 
 		my %hist = map {$_ => 0} @buckets;
 
 		for (1 .. 10) {
 			my $v = rand(11);
 
-			http_get("/hist/$v");
+			my @res = split(';', metric_send(8103, "angie", $v));
+
+			my @res1 = sort split(' ', $res[0]);
+			my @res2 = sort split(' ', $res[1]);
 
 			for my $k (@buckets) {
 				if ($k eq 'inf' || $v <= $k) {
@@ -821,17 +722,55 @@ my %test_cases = (
 				}
 			}
 
-			cmp_deeply(get_json('/api/hist1/metrics/angie'), \%hist,
-				"mode hist 1 - $_");
-			cmp_deeply(get_json('/api/hist2/metrics/angie'), \%hist,
-				"mode hist 2 - $_");
+			my @exp = sort values %hist;
+
+			cmp_deeply(\@res1, \@exp, "mode hist 1 - $_");
+			cmp_deeply(\@res2, \@exp, "mode hist 2 - $_");
 		}
 	},
 
+	'complex var' => sub {
+		metric_send(8104, 'angie', 0);
+		metric_send(8104, 'angie', 20);
+		my $res = metric_send(8104, 'angie', 40);
+
+		like(
+			$res,
+			qr/^3, 20, 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 3$/m,
+			"complex variable"
+		);
+	},
+
+	'stage' => sub {
+		plan(skip_all => 'no http api') unless $t->has_module('http_api');
+
+		metric_send(8105, 'angie', 1);
+		is(get_json('/api/stage1/metrics/angie/'), 0, 'stage connect 1');
+
+		metric_send(8106, 'angie', 1);
+		like(http_get('/api/stage1/metrics/'), qr/"angie":\s\d+/,
+			'stage connect 2');
+
+		SKIP: {
+			skip 'no mqtt preread', 1
+				if not $t->has_module('stream_mqtt_preread');
+
+			my $packet = mqtt_connect(5, 'angie', '');
+			stream('127.0.0.1:' . port(8107))->io($packet);
+
+			is(get_json('/api/stage2/metrics/angie/'), 1, 'stage preread');
+		}
+
+		metric_send(8108, 'angie', 1);
+		is(get_json('/api/stage3/metrics/angie/'), 9, 'stage end');
+	},
+
 	'complex metrics - basic' => sub {
+		plan(skip_all => 'no http api') unless $t->has_module('http_api');
+
 		my $key = 'a' x 255;
 
-		http_get("/block0/$key.../");
+		metric_send(8109, $key, 0);
 		my $res = get_json("/api/block0/metrics");
 
 		cmp_deeply(
@@ -856,7 +795,8 @@ my %test_cases = (
 
 		$key = 'a' x $n;
 
-		$res = get_json("/block0/$key/");
+		metric_send(8109, $key, 0);
+		$res = get_json("/api/block0/metrics/$key/");
 
 		cmp_deeply(
 			$res,
@@ -876,7 +816,8 @@ my %test_cases = (
 			'block 1'
 		) or diag(explain({got => $res}));
 
-		$res = get_json("/block0/$key/348");
+		metric_send(8109, $key, 348);
+		$res = get_json("/api/block0/metrics/$key/");
 
 		cmp_deeply(
 			$res,
@@ -896,7 +837,8 @@ my %test_cases = (
 			'block 2'
 		) or diag(explain({got => $res}));
 
-		$res = get_json("/block0/$key/-343455");
+		metric_send(8109, $key, -343455);
+		$res = get_json("/api/block0/metrics/$key/");
 
 		cmp_deeply(
 			$res,
@@ -916,7 +858,8 @@ my %test_cases = (
 			'block 3'
 		) or diag(explain({got => $res}));
 
-		$res = get_json("/block0/$key/0.04");
+		metric_send(8109, $key, 0.04);
+		$res = get_json("/api/block0/metrics/$key/");
 
 		cmp_deeply(
 			$res,
@@ -936,7 +879,8 @@ my %test_cases = (
 			'block 4'
 		) or diag(explain({got => $res}));
 
-		$res = get_json('/block0/"91A,&man/1');
+		metric_send(8109, '"91A,&man', 1);
+		$res = get_json('/api/block0/metrics/"91A,&man/');
 
 		cmp_deeply(
 			$res,
@@ -957,13 +901,17 @@ my %test_cases = (
 		);
 
 		# crc32("91A,&man) == crc32(O~~yX}}12)
+		metric_send(8109, 'O~~yX}}12', 1);
+		my $res2 = get_json("/api/block0/metrics/O~~yX}}12/");
 
-		cmp_deeply($res, get_json("/block0/O~~yX}}12/1"), "hash collision 2");
+		cmp_deeply($res, $res2, "hash collision 2");
 	},
 
 	'api output' => sub {
+		plan(skip_all => 'no http api') unless $t->has_module('http_api');
+
 		for (my $i = 1; $i < 109; $i++) {
-			http_get("/block_large_slabs/$i");
+			metric_send(8110, 'angie', $i);
 		}
 
 		my %hist1;
@@ -1017,18 +965,9 @@ my %test_cases = (
 		) or diag(explain({got => $res}));
 	},
 
-	'complex var' => sub {
-		http_get('/complex_var/0');
-		http_get('/complex_var/20');
-
-		like(
-			http_get("/complex_var/40"),
-			qr/^value=3, 20, 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 3$/m,
-			"complex variable"
-		);
-	},
-
 	'complex metrics - expire on' => sub {
+		plan(skip_all => 'no http api') unless $t->has_module('http_api');
+
 		my @block1_data;
 
 		my $fails = 0;
@@ -1038,7 +977,8 @@ my %test_cases = (
 
 			my $v = int(rand 99999) - int(rand 99999);
 
-			push @block1_data, get_json("/block1/$key/$v");
+			metric_send(8111, $key, $v);
+			push @block1_data, get_json("/api/block1/metrics/$key");
 
 			$fails = get_json('/api/status/slabs/block1/slots/128/fails');
 		} while ($fails < 10);
@@ -1091,7 +1031,7 @@ my %test_cases = (
 
 			my $v = rand 99999 - rand 99999;
 
-			http_get("/block2/$key/$v");
+			metric_send(8112, $key, $v);
 			push @block2_data, $key;
 
 			$fails = get_json('/api/status/slabs/block2/slots/128/fails');
@@ -1110,21 +1050,21 @@ my %test_cases = (
 		is($fails, 100, 'expire on without key');
 
 		# complex metrics - submetric vars
-		like(http_get('/var/block1/count/'), qr/value=$data1->{count}/,
-			'count');
-		like(http_get('/var/block1/min/'), qr/value=$data1->{min}/, 'min');
-		like(http_get('/var/block1/max/'), qr/value=$data1->{max}/, 'max');
-		like(http_get('/var/block1/last/'), qr/value=$data1->{last}/, 'last');
+		is(metric_send(8113, 'expired', 0), $data1->{count}, 'count');
+		is(metric_send(8114, 'expired', 0), $data1->{min}, 'min');
+		is(metric_send(8115, 'expired', 0), $data1->{max}, 'max');
+		is(metric_send(8116, 'expired', 0), $data1->{last}, 'last');
 
 		my @hist_items = map { $data1->{hist}{$_} } @buckets;
 		my $hist_str = join(" ", @hist_items);
 
-		like(http_get('/var/block1/hist/'), qr/value=$hist_str/, 'hist');
-		like(http_get('/var/block1/gauge/'), qr/value=$data1->{gauge}/,
-			'gauge');
+		is(metric_send(8117, 'expired', 0), $hist_str, 'histogram');
+		is(metric_send(8118, 'expired', 0), $data1->{gauge}, 'gauge');
 	},
 
 	'complex metrics - expire off' => sub {
+		plan(skip_all => 'no http api') unless $t->has_module('http_api');
+
 		my $fails = 0;
 		my $count = 0;
 		do {
@@ -1133,7 +1073,8 @@ my %test_cases = (
 
 			my $v = int(rand 999999);
 
-			my $res = get_json("/block3/$key/$v");
+			metric_send(8119, $key, $v);
+			my $res = get_json("/api/block3/metrics/$key/");
 
 			if (exists $res->{error}) {
 				$count++;
@@ -1164,7 +1105,8 @@ my %test_cases = (
 
 			my $v = int(rand 10);
 
-			my $res = get_json("/block4/$key/$v");
+			metric_send(8120, $key, $v);
+			my $res = get_json("/api/block4/metrics/$key/");
 
 			if (exists $res->{error}) {
 				$data->{count}++;
@@ -1207,3 +1149,64 @@ my %test_cases = (
 $t->plan(scalar keys %test_cases);
 
 $t->run_tests(\%test_cases);
+
+###############################################################################
+
+sub metric_send {
+	my ($port, $key, $value) = @_;
+
+	my $pp2_sig = pack("N3", 0x0D0A0D0A, 0x000D0A51, 0x5549540A);
+	my $ver_cmd = pack('C', 0x21);
+	my $family = pack('C', 0x11);
+
+	my $packet = $pp2_sig . $ver_cmd . $family;
+
+	my $ip1 = pack('N', 0x00000000);
+	my $ip2 = pack('N', 0x00000000);
+	my $ports = pack('nn', $port, $port);
+
+	my $addrs = $ip1 . $ip2 . $ports;
+
+	my $tlv = pack("CnA*", 0xe0, length($key), $key);
+	$tlv .= pack("CnA*", 0xe1, length($value), $value);
+
+	my $len = length($addrs) + length($tlv);
+
+	$packet .= pack('n', $len) . $addrs . $tlv;
+
+	stream('127.0.0.1:' . port($port))->io($packet);
+}
+
+sub mqtt_connect {
+	my ($version, $client_id, $username) = @_;
+	my ($ul, $cl) = (length($username) , length($client_id));
+
+	my ($f) = 2;
+	$f |= 0x80 if $ul;
+
+	my ($vh) = pack('nNC2n', 0x04, 0x4d515454, $version, $f, 0x00);
+	$vh .= pack('c', 0x00) if $version eq 5;
+
+	my $p = pack('n', $cl) . $client_id;
+	$p .= pack('n', $ul) . $username if $ul;
+	$vh .= $p;
+
+	my $packet = pack('C', 0x10);
+	$packet .= get_varbyte(length($vh)) . $vh;
+
+	return $packet;
+}
+
+sub get_varbyte {
+	my ($x) = @_;
+	my ($b, $o);
+
+	do {
+		$b = $x % 128;
+		$x = int($x / 128);
+		$b = $b | 128 if $x > 0;
+		$o .= pack('C', $b)
+	} while ($x > 0);
+
+	return $o;
+}

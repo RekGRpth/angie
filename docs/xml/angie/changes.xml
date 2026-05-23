@@ -7,6 +7,37 @@
 
 <changes ver="1.12.0" date="">
 
+<change type="feature">
+<para lang="ru">
+произвольно конфигурируемый сбор статистики с помощью модуля Metric в
+STREAM; позволяет, используя различные методы (счетчики, гистограммы,
+скользящие средние и др.), агрегировать любые данные на разных стадиях
+обработки соединения в реальном времени с помощью переменных по заданным ключам
+и отдавать их в секции "/status/stream/metric_zones/" API статистики (с
+поддержкой Prometheus).
+</para>
+<para lang="en">
+the Metrics module enabling arbitrary, real‑time STREAM metrics collection
+with fully configurable aggregation methods (counters, histograms,
+moving averages, etc.); it allows tracking processing data at any stage,
+grouped by custom keys, and exposes the metrics via the
+"/status/stream/metric_zones/" API section (including Prometheus support).
+</para>
+</change>
+
+<change type="bugfix">
+при использовании параметра window метрики average mean результат
+мог посчитаться неправильно, в частности, вскоре после запуска системы
+на Linux значения могли оставаться нулевыми.
+<para lang="ru">
+</para>
+<para lang="en">
+when using the window parameter of the average mean metric, the result
+could be calculated incorrectly, in particular, shortly after starting
+the system on Linux, the values could remain zero.
+</para>
+</change>
+
 <change type="bugfix">
 значения метрик count и histogram могли неправильно выводиться на 32-битных
 платформах при достижении 2^32-1.
@@ -214,7 +245,7 @@ none are configured in Angie, the default server "127.0.0.1:53" is used.
 
 <change type="feature">
 <para lang="ru">
-вся функциональность nginx 1.31.0, за исключением HTTP-модуля "sticky",
+вся функциональность nginx 1.31.1, за исключением HTTP-модуля "sticky",
 модуля балансировки "least_time", директивы "ssl_ech_file" и связанных
 с ней переменных ("$ssl_ech_status" и "$ssl_ech_outer_server_name"),
 а также изменений в поведении директивы "keepalive" HTTP модуля "upstream".
@@ -225,7 +256,7 @@ none are configured in Angie, the default server "127.0.0.1:53" is used.
 предложенной опции "local".
 </para>
 <para lang="en">
-all functionality of nginx 1.31.0 except the HTTP "sticky" module, "least_time"
+all functionality of nginx 1.31.1 except the HTTP "sticky" module, "least_time"
 balancing module, the "ssl_ech_file" directive, and related variables
 ("ssl_ech_status" and "ssl_ech_outer_server_name"), and changes of the
 "keepalive" directive in the "upstream" HTTP module. The Encrypted Client
