@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Maxim Dounin
 
 # Tests for http ssl module, support for Encrypted Client Hello (ECH).
@@ -23,9 +24,12 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
+my $openssl = $ENV{TEST_ANGIE_OPENSSL_BINARY} // 'openssl';
+my $bssl = $ENV{TEST_ANGIE_BSSL_BINARY} // 'bssl';
+
 my $t = Test::Nginx->new()
 	->has(qw/http http_ssl sni rewrite/)
-	->has_daemon('openssl');
+	->has_daemon($openssl);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -88,7 +92,7 @@ EOF
 my $d = $t->testdir();
 
 foreach my $name ('public', 'secret', 'verify') {
-	system('openssl req -x509 -new '
+	system("$openssl req -x509 -new "
 		. "-config $d/openssl.conf -subj /CN=$name/ "
 		. "-out $d/$name.crt -keyout $d/$name.key "
 		. ">>$d/openssl.out 2>&1") == 0
@@ -102,22 +106,22 @@ $t->write_file(
 	. $t->read_file('verify.crt')
 );
 
-if ((`openssl ech -help 2>&1` || '') =~ m/-public_name/) {
+if ((`$openssl ech -help 2>&1` || '') =~ m/-public_name/) {
 
 	# Generate ECH file with "openssl ech"
 
-	system('openssl ech '
+	system("$openssl ech "
 		. "-out $d/public.ech "
 		. "-public_name public "
 		. ">>$d/openssl.out 2>&1") == 0
 		or die "Can't create ECH config: $!\n";
 
-} elsif ((`bssl 2>&1` || '') =~ m/generate-ech/) {
+} elsif ((`$bssl 2>&1` || '') =~ m/generate-ech/) {
 
 	# Generate ECH file with "bssl generate-ech"
 	# and additional manual formatting to produce a PEM file
 
-	system('bssl generate-ech '
+	system("$bssl generate-ech "
 		. "-out-ech-config $d/public.echconfig.bin "
 		. "-out-ech-config-list $d/public.echconfiglist.bin "
 		. "-out-private-key $d/public.echkey.bin "
@@ -185,9 +189,9 @@ $t->write_file('req-verify', "GET / HTTP/1.0\nHost: verify\n\n");
 
 SKIP: {
 skip 'no openssl client ech', 4
-	if `openssl s_client -help 2>&1` !~ /-ech_config_list/;
+	if `$openssl s_client -help 2>&1` !~ /-ech_config_list/;
 
-# Tests with OpenSSL s_client from ECH feature branch
+# Tests with OpenSSL s_client with ECH support
 
 # Note that OpenSSL s_client prints confusing "ECH: BAD NAME: -102" status
 # when it is not able to verify server certificate.  To make sure proper
@@ -204,7 +208,7 @@ skip 'no openssl client ech', 4
 #
 # As a workaround, we explicitly request TLSv1.3 only.
 
-$cmd = "openssl s_client "
+$cmd = "$openssl s_client "
 	. "-connect 127.0.0.1:$port "
 	. "-servername secret "
 	. "-ech_config_list $config "
@@ -220,7 +224,7 @@ log_in($out);
 TODO: {
 local $TODO = 'OpenSSL too old'
 	if $t->has_module('OpenSSL') && !$t->has_module('BoringSSL')
-	&& !$t->has_feature('openssl:3.6.0');
+	&& !$t->has_feature('openssl:4.0.0');
 local $TODO = 'LibreSSL has no support yet'
 	if $t->has_module('LibreSSL');
 
@@ -234,7 +238,7 @@ like($out, qr/^ECH: success.*secret:1$/ms, 'openssl client');
 # The test explicitly requests @SECLEVEL=0 for libraries without TLSv1.2
 # support, such as OpenSSL 1.0.0.
 
-$cmd = "openssl s_client "
+$cmd = "$openssl s_client "
 	. "-connect 127.0.0.1:$port "
 	. "-servername secret "
 	. "-cipher DEFAULT:\@SECLEVEL=0 "
@@ -251,27 +255,15 @@ like($out, qr/^ECH: NOT CONFIGURED.*secret:$/ms, 'openssl client no ech');
 # Tests with client certificate verification,
 # mostly to check if the $ssl_encrypted_hello variable is correct, notably
 # with failed client certificate verification.
-#
-# Currently fails with OpenSSL ECH feature branch on the server,
-# the error is as follows:
-#
-# ... [crit] ... SSL_do_handshake() failed (SSL: error:0A000100:SSL routines::
-# missing fatal)...
-#
-# This is expected to be fixed by
-# https://github.com/openssl/openssl/pull/28555.
 
 TODO: {
-local $TODO = 'OpenSSL broken verify'
-	if $t->has_module('OpenSSL') && !$t->has_module('BoringSSL')
-	&& $t->has_feature('openssl:3.6.0');
 local $TODO = 'OpenSSL too old'
 	if $t->has_module('OpenSSL') && !$t->has_module('BoringSSL')
-	&& !$t->has_feature('openssl:3.6.0');
+	&& !$t->has_feature('openssl:4.0.0');
 local $TODO = 'LibreSSL has no support yet'
 	if $t->has_module('LibreSSL');
 
-$cmd = "openssl s_client "
+$cmd = "$openssl s_client "
 	. "-connect 127.0.0.1:$port "
 	. "-servername verify "
 	. "-ech_config_list $config "
@@ -288,7 +280,7 @@ log_in($out);
 
 like($out, qr/^ECH: success.*verify:1:SUCCESS/ms, 'openssl client verify');
 
-$cmd = "openssl s_client "
+$cmd = "$openssl s_client "
 	. "-connect 127.0.0.1:$port "
 	. "-servername verify "
 	. "-ech_config_list $config "
@@ -311,7 +303,7 @@ like($out, qr/^ECH: success.*verify:1:FAILED/ms,
 
 SKIP: {
 skip 'no bssl client ech', 4
-	if (`bssl client -help 2>&1` || '') !~ /-ech-config-list/;
+	if (`$bssl client -help 2>&1` || '') !~ /-ech-config-list/;
 
 # Tests with BoringSSL bssl tool
 
@@ -320,7 +312,7 @@ skip 'no bssl client ech', 4
 
 $t->write_file('public.bin', decode_base64($config));
 
-$cmd = "bssl client "
+$cmd = "$bssl client "
 	. "-connect 127.0.0.1:$port "
 	. "-server-name secret "
 	. "-ech-config-list $d/public.bin "
@@ -335,7 +327,7 @@ log_in($out);
 TODO: {
 local $TODO = 'OpenSSL too old'
 	if $t->has_module('OpenSSL') && !$t->has_module('BoringSSL')
-	&& !$t->has_feature('openssl:3.6.0');
+	&& !$t->has_feature('openssl:4.0.0');
 local $TODO = 'LibreSSL has no support yet'
 	if $t->has_module('LibreSSL');
 
@@ -349,7 +341,7 @@ like($out, qr/Encrypted ClientHello: yes.*secret:1$/ms, 'bssl client');
 # The test explicitly requests TLSv1.0 for libraries without TLSv1.2
 # support, such as OpenSSL 1.0.0.
 
-$cmd = "bssl client "
+$cmd = "$bssl client "
 	. "-connect 127.0.0.1:$port "
 	. "-server-name secret "
 	. "-min-version tls1 "
@@ -368,16 +360,13 @@ like($out, qr/Encrypted ClientHello: no.*secret:$/ms, 'bssl client no ech');
 # with failed client certificate verification.
 
 TODO: {
-local $TODO = 'OpenSSL broken verify'
-	if $t->has_module('OpenSSL') && !$t->has_module('BoringSSL')
-	&& $t->has_feature('openssl:3.6.0');
 local $TODO = 'OpenSSL too old'
 	if $t->has_module('OpenSSL') && !$t->has_module('BoringSSL')
-	&& !$t->has_feature('openssl:3.6.0');
+	&& !$t->has_feature('openssl:4.0.0');
 local $TODO = 'LibreSSL has no support yet'
 	if $t->has_module('LibreSSL');
 
-$cmd = "bssl client "
+$cmd = "$bssl client "
 	. "-connect 127.0.0.1:$port "
 	. "-server-name verify "
 	. "-ech-config-list $d/public.bin "
@@ -394,7 +383,7 @@ log_in($out);
 like($out, qr/Encrypted ClientHello: yes.*verify:1:SUCCESS/ms,
 	'bssl client verify');
 
-$cmd = "bssl client "
+$cmd = "$bssl client "
 	. "-connect 127.0.0.1:$port "
 	. "-server-name verify "
 	. "-ech-config-list $d/public.bin "
