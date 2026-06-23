@@ -692,14 +692,10 @@ ngx_api_stream_server_zones_handler(ngx_api_entry_data_t data,
     for (zone = cmcf->server_zones; zone; zone = zone->next) {
         ictx.elts = zone;
 
-        ngx_rwlock_rlock(&zone->sh->lock);
-
         zone->current_node = zone->sh->first_node;
 
         rc = ngx_api_object_iterate(ngx_api_stream_server_zones_iter,
                                     &ictx, actx);
-
-        ngx_rwlock_unlock(&zone->sh->lock);
 
         /* single zone */
         if (path.len != 0) {
@@ -873,6 +869,23 @@ ngx_stream_get_server_stats(ngx_stream_session_t *s,
 
     hash = ngx_crc32_short(key.data, key.len);
 
+    if (zone->sh->stats_count >= zone->count) {
+        node = ngx_stream_stats_zone_lookup(&zone->sh->rbtree, &key, hash);
+        return node == NULL
+               ? &zone->sh->first_node->server_stats
+               : &((ngx_stream_stats_zone_node_t *) &node->color)->server_stats;
+    }
+
+    ngx_rwlock_rlock(&zone->sh->lock);
+
+    node = ngx_stream_stats_zone_lookup(&zone->sh->rbtree, &key, hash);
+
+    ngx_rwlock_unlock(&zone->sh->lock);
+
+    if (node != NULL) {
+        return &((ngx_stream_stats_zone_node_t *) &node->color)->server_stats;
+    }
+
     ngx_rwlock_wlock(&zone->sh->lock);
 
     node = ngx_stream_stats_zone_lookup(&zone->sh->rbtree, &key, hash);
@@ -896,6 +909,8 @@ ngx_stream_get_server_stats(ngx_stream_session_t *s,
 #if (NGX_STREAM_SSL)
         stats_zone->ssl = status_zone->ssl;
 #endif
+
+        ngx_memory_barrier();
 
         zone->sh->last_node->next = stats_zone;
         zone->sh->last_node = stats_zone;
