@@ -376,6 +376,8 @@ static ngx_buf_t *ngx_http_acme_create_dns_error_response(ngx_connection_t *c);
 static ngx_int_t ngx_http_acme_run(ngx_acme_session_t *ses);
 static ngx_int_t ngx_http_acme_new_nonce(ngx_acme_session_t *ses);
 static ngx_int_t ngx_http_acme_bootstrap(ngx_acme_session_t *ses);
+static void ngx_http_acme_log_profile_error(ngx_acme_session_t *ses,
+    ngx_data_item_t *profiles);
 static ngx_int_t ngx_http_acme_account_ensure(ngx_acme_session_t *ses);
 static ngx_int_t ngx_http_acme_cert_issue(ngx_acme_session_t *ses);
 static ngx_int_t ngx_http_acme_authorize(ngx_acme_session_t *ses);
@@ -1892,13 +1894,8 @@ ngx_http_acme_csr_gen(ngx_acme_session_t *ses, ngx_acme_privkey_t *key,
         return NGX_ERROR;
     }
 
+    name = NULL;
     exts = NULL;
-
-    name = X509_NAME_new();
-    if (!name) {
-        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0, "X509_NAME_new() failed");
-        goto failed;
-    }
 
     if (!X509_REQ_set_pubkey(crq, key->key)) {
         ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
@@ -1909,25 +1906,39 @@ ngx_http_acme_csr_gen(ngx_acme_session_t *ses, ngx_acme_privkey_t *key,
     domains = ses->client->domains;
     s = ((ngx_str_t*) domains->elts)[0];
 
-    if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, s.data, s.len,
-                                    -1, 0))
-    {
-        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
-                      "X509_NAME_add_entry_by_txt() failed");
-        goto failed;
-    }
+    if (!ngx_acme_str_is_ip(&s)) {
+        /*
+         * Some CAs do not recommend using IP addresses as Common Names in CSRs
+         * and may reject such requests. For example, Let's Encrypt:
+         * https://community.letsencrypt.org/t/239012
+         */
+        name = X509_NAME_new();
+        if (!name) {
+            ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0, "X509_NAME_new() failed");
+            goto failed;
+        }
 
-    if (!X509_REQ_set_subject_name(crq, name)) {
-        ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
-                      "X509_REQ_set_subject_name() failed");
-        goto failed;
+        if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, s.data, s.len,
+                                        -1, 0))
+        {
+            ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
+                          "X509_NAME_add_entry_by_txt() failed");
+            goto failed;
+        }
+
+        if (!X509_REQ_set_subject_name(crq, name)) {
+            ngx_ssl_error(NGX_LOG_ALERT, ses->log, 0,
+                          "X509_REQ_set_subject_name() failed");
+            goto failed;
+        }
     }
 
     len = domains->nelts; /* separating commas + terminating null */
 
     for (i = 0; i < domains->nelts; i++) {
         s = ((ngx_str_t*) domains->elts)[i];
-        len += sizeof("DNS:") - 1 + s.len;
+        len += ngx_acme_str_is_ip(&s) ? 3 /* "IP:" */ : 4 /* "DNS:" */;
+        len += s.len;
     }
 
     san = ngx_pnalloc(ses->pool, len);
@@ -1940,7 +1951,8 @@ ngx_http_acme_csr_gen(ngx_acme_session_t *ses, ngx_acme_privkey_t *key,
 
     for (i = 0; i < domains->nelts; i++) {
         s = ((ngx_str_t*) domains->elts)[i];
-        p = ngx_slprintf(p, end, "%sDNS:%V", i ? "," : "", &s);
+        p = ngx_slprintf(p, end, "%s%s:%V", i ? "," : "",
+                         ngx_acme_str_is_ip(&s) ? "IP" : "DNS", &s);
     }
 
     *p = 0;
@@ -2036,7 +2048,7 @@ ngx_http_acme_identifiers(ngx_acme_session_t *ses, ngx_str_t *identifiers)
 {
     size_t        len;
     u_char       *p, *end;
-    ngx_str_t     s;
+    ngx_str_t     s, profile;
     ngx_uint_t    i;
     ngx_array_t  *domains;
 
@@ -2044,9 +2056,15 @@ ngx_http_acme_identifiers(ngx_acme_session_t *ses, ngx_str_t *identifiers)
     len = sizeof("{\"identifiers\":[]}") - 1
           + domains->nelts - 1; /* separating commas */
 
+    profile = ses->client->profile;
+    if (profile.len != 0) {
+        len += sizeof("\"profile\":\"\",") - 1 + profile.len;
+    }
+
     for (i = 0; i < domains->nelts; i++) {
         s = ((ngx_str_t*) domains->elts)[i];
-        len += sizeof("{\"type\":\"dns\",\"value\":\"\"}") - 1 + s.len;
+        len += sizeof("{\"type\":\"\",\"value\":\"\"}") - 1 + s.len;
+        len += ngx_acme_str_is_ip(&s) ? 2 /* "ip" */ : 3 /* "dns" */;
     }
 
     identifiers->data = ngx_pnalloc(ses->pool, len);
@@ -2054,15 +2072,23 @@ ngx_http_acme_identifiers(ngx_acme_session_t *ses, ngx_str_t *identifiers)
         return NGX_ERROR;
     }
 
-    p = ngx_cpymem(identifiers->data, "{\"identifiers\":[",
-                   sizeof("{\"identifiers\":[") - 1);
+    p = identifiers->data;
+    end = p + len;
 
-    end = identifiers->data + len;
+    if (profile.len != 0) {
+        p = ngx_slprintf(p, end, "{\"profile\":\"%V\",\"identifiers\":[",
+                         &profile);
+
+    } else {
+        p = ngx_cpymem(p, "{\"identifiers\":[",
+                       sizeof("{\"identifiers\":[") - 1);
+    }
 
     for (i = 0; i < domains->nelts; i++) {
         s = ((ngx_str_t*) domains->elts)[i];
-        p = ngx_slprintf(p, end, "%s{\"type\":\"dns\",\"value\":\"%V\"}",
-                         i ? "," : "", &s);
+        p = ngx_slprintf(p, end, "%s{\"type\":\"%s\",\"value\":\"%V\"}",
+                         i ? "," : "", ngx_acme_str_is_ip(&s) ? "ip" : "dns",
+                         &s);
     }
 
     p = ngx_cpymem(p, "]}", sizeof("]}") - 1);
@@ -2231,6 +2257,7 @@ ngx_http_acme_cert_validity(ngx_acme_client_t *cli, ngx_uint_t log_diagnosis,
     const ASN1_TIME        *t;
     const ASN1_STRING      *value;
     const X509_NAME_ENTRY  *entry;
+    u_char                  buf[NGX_INET6_ADDRSTRLEN];
 
     bio = BIO_new_mem_buf(cert_data, (int) cert_len);
 
@@ -2320,6 +2347,34 @@ ngx_http_acme_cert_validity(ngx_acme_client_t *cli, ngx_uint_t log_diagnosis,
                         found = 1;
                     }
                     OPENSSL_free(s);
+                }
+
+            } else if (type == GEN_IPADD) {
+                switch (ASN1_STRING_length(value)) {
+                    case 4:
+                        type = AF_INET;
+                        break;
+#if (NGX_HAVE_INET6)
+                    case 16:
+                        type = AF_INET6;
+                        break;
+#endif
+                    default:
+                        ngx_log_error(NGX_LOG_ALERT, cli->log, 0,
+                                      "unsupported identifier address family "
+                                      "in certificate");
+                        continue;
+                }
+
+#if OPENSSL_VERSION_NUMBER > 0x10100000L
+                s = (u_char *) ASN1_STRING_get0_data(value);
+#else
+                s = ASN1_STRING_data(value);
+#endif
+                if (ngx_inet_ntop(type, s, buf, sizeof(buf)) == domain.len
+                    && ngx_strncasecmp(domain.data, buf, domain.len) == 0)
+                {
+                    found = 1;
                 }
             }
         }
@@ -2927,9 +2982,59 @@ ngx_http_acme_bootstrap(ngx_acme_session_t *ses)
         NGX_ACME_TERMINATE(bootstrap, NGX_ERROR);
     }
 
+    if (ses->client->profile.len != 0) {
+        item = ngx_data_object_get_value(ses->dir, "meta", "profiles", 0);
+
+        if (item == NULL || item->type != NGX_DATA_OBJECT_TYPE) {
+            ngx_log_error(NGX_LOG_ERR, ses->log, 0,
+                          "ACME server does not support profiles");
+            NGX_ACME_TERMINATE(bootstrap, NGX_ERROR);
+
+        } else if (ngx_data_object_find(item, &ses->client->profile) == NULL) {
+            ngx_http_acme_log_profile_error(ses, item);
+            NGX_ACME_TERMINATE(bootstrap, NGX_ERROR);
+        }
+    }
+
     NGX_ACME_END(bootstrap);
 
     return NGX_OK;
+}
+
+
+static void
+ngx_http_acme_log_profile_error(ngx_acme_session_t *ses,
+    ngx_data_item_t *profiles)
+{
+    u_char      *last, *p;
+    ngx_str_t    s;
+    const char  *sep;
+    u_char       buf[NGX_MAX_ERROR_STR];
+
+    sep = "";
+    p = buf;
+    last = p + NGX_MAX_ERROR_STR - 1;
+    p = ngx_slprintf(buf, last, "ACME server does not support profile \"%V\", "
+                     "supported profiles: ", &ses->client->profile);
+
+    profiles = profiles->data.child;
+
+    while (profiles) {
+        (void) ngx_data_get_string(&s, profiles);
+
+        /* skip the value */
+        profiles = profiles->next;
+
+        p = ngx_slprintf(p, last, "%s\"%V\"", sep, &s);
+
+        sep = ", ";
+
+        profiles = profiles->next;
+    }
+
+    *p = 0;
+
+    ngx_log_error(NGX_LOG_ERR, ses->log, 0, "%s", buf);
 }
 
 
@@ -3525,7 +3630,7 @@ next_auth:
     ngx_str_set(&s, "type not found");
 
     if (ngx_data_object_get_str(item, &s, "type", 0) != NGX_OK
-        || !ngx_str_eq(&s, "dns"))
+        || (!ngx_str_eq(&s, "dns") && !ngx_str_eq(&s, "ip")))
     {
         ngx_log_error(NGX_LOG_ERR, ses->log, 0,
                       "identifier \"%V\" is of an unsupported type (%V)",
@@ -6347,6 +6452,16 @@ ngx_http_acme_client(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
             if (ngx_decode_base64url(&cli->eab_key, &s) != NGX_OK) {
                 return "has an invalid key value in the \"eab\" parameter";
             }
+
+            continue;
+        }
+
+        if (ngx_strncmp(value[i].data, "profile=", 8) == 0) {
+
+            value[i].data += 8;
+            value[i].len -= 8;
+
+            cli->profile = value[i];
 
             continue;
         }

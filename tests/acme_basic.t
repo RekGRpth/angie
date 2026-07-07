@@ -19,7 +19,7 @@ use Test::More;
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
 use lib 'lib';
-use Test::Nginx qw/ :DEFAULT /;
+use Test::Nginx qw/ :DEFAULT http_content /;
 use Test::Nginx::ACME;
 use Test::Utils qw/ get_json /;
 
@@ -48,6 +48,10 @@ my $acme_helper = Test::Nginx::ACME->new({t => $t, dns_port => $dns_port});
 my $pebble_port = port(14000);
 my $http_port = port(5002);
 
+my $profile = $acme_helper->{_profiles_supported}
+			? 'profile=veryshortlived'
+			: '';
+
 $t->write_file_expand('nginx.conf', <<"EOF");
 %%TEST_GLOBALS%%
 
@@ -62,7 +66,9 @@ http {
     resolver localhost:$dns_port ipv6=off;
 
     acme_client test https://localhost:$pebble_port/dir
-                email=admin\@angie-test.com;
+                email=admin\@example.com
+                $profile;
+
     server {
         listen          127.0.0.1:8080;
         server_name     localhost;
@@ -74,9 +80,7 @@ http {
 
     server {
         listen               %%PORT_8443%% ssl;
-        server_name          angie-test900.com
-                             angie-test901.com
-                             angie-test902.com;
+        server_name          example.com;
 
         ssl_certificate      \$acme_cert_test;
         ssl_certificate_key  \$acme_cert_key_test;
@@ -84,7 +88,21 @@ http {
         acme                 test;
 
         location / {
-            return           200 "SECURED";
+            return           200 "DOMAIN";
+        }
+    }
+
+    server {
+        listen               %%PORT_8443%% ssl;
+        server_name          127.0.0.1;
+
+        ssl_certificate      \$acme_cert_test;
+        ssl_certificate_key  \$acme_cert_key_test;
+
+        acme                 test;
+
+        location / {
+            return           200 "IP";
         }
     }
 
@@ -95,10 +113,28 @@ EOF
 
 $acme_helper->start_challtestsrv();
 
-$acme_helper->start_pebble({
-	pebble_port => $pebble_port, http_port => $http_port,
-	certificate_validity_period => 10
-});
+my $pebble_args = {
+	pebble_port => $pebble_port,
+	http_port => $http_port,
+};
+
+if ($acme_helper->{_profiles_supported}) {
+	# Create a profile for a very short-lived certificate.  This also tests
+	# support for ACME profiles.  The test passes if renewal occurs quickly
+	# enough, indicating that the certificate complies with the profile.
+
+	$pebble_args->{profiles} = {
+		veryshortlived => {
+			description => "A profile that won't require a long wait for certificate renewal",
+			validity_period => 10,
+		},
+	};
+
+} else {
+	$pebble_args->{certificate_validity_period} = 10;
+}
+
+$acme_helper->start_pebble($pebble_args);
 
 $t->try_run('variables in "ssl_certificate" and "ssl_certificate_key" '
 	. 'directives are not supported on this platform');
@@ -148,7 +184,10 @@ subtest 'obtaining and renewing a certificate' => sub {
 
 	# Then try to use it.
 
-	like(http_get('/', SSL => 1), qr/SECURED/, 'used certificate');
+	like(https_get('/', 'example.com'), qr/DOMAIN/, 'used certificate for domain name')
+		or return 0;
+	like(https_get('/', '127.0.0.1'), qr/IP/, 'used certificate for ip')
+		or return 0;
 
 	# Finally, renew the certificate.
 
@@ -195,3 +234,22 @@ subtest 'obtaining and renewing a certificate' => sub {
 	cmp_deeply(get_json('/status/'), $expected_acme_clients, "API ok");
 };
 
+###############################################################################
+
+sub https_get {
+	my ($uri, $host) = @_;
+
+	my %extra = (
+		SSL => 1,
+		PeerAddr => '127.0.0.1:' . port(8443),
+		SSL_hostname => $host,
+	);
+
+	my $s = http(<<EOF, %extra);
+POST $uri HTTP/1.0
+Host: $host
+
+EOF
+
+	return http_content($s) // '';
+}

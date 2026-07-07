@@ -82,6 +82,7 @@ struct ngx_acme_client_s {
     ngx_str_t                    eab_id;
     ngx_str_t                    eab_key;
     ngx_acme_eab_alg_t           eab_alg;
+    ngx_str_t                    profile;
 
     unsigned                     enabled:1;
     unsigned                     renew_on_load:1;
@@ -107,6 +108,7 @@ ngx_int_t ngx_acme_select_alpn_proto(const unsigned char **out,
     unsigned char *outlen, const unsigned char *in, unsigned int inlen);
 ngx_uint_t ngx_acme_is_alpn_needed(ngx_conf_t *cf);
 ngx_acme_client_t *ngx_acme_client_add(ngx_conf_t *cf, ngx_str_t *name);
+ngx_uint_t ngx_acme_str_is_ip(ngx_str_t *str);
 
 
 extern ngx_module_t              ngx_acme_module;
