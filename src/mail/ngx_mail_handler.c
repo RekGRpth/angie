@@ -26,7 +26,6 @@ static ngx_int_t ngx_mail_verify_cert(ngx_mail_session_t *s,
 void
 ngx_mail_init_connection(ngx_connection_t *c)
 {
-    size_t                     len;
     ngx_uint_t                 i;
     ngx_event_t               *rev;
     ngx_mail_port_t           *port;
@@ -37,7 +36,6 @@ ngx_mail_init_connection(ngx_connection_t *c)
     ngx_mail_session_t        *s;
     ngx_mail_addr_conf_t      *addr_conf;
     ngx_mail_core_srv_conf_t  *cscf;
-    u_char                     text[NGX_SOCKADDR_STRLEN];
 #if (NGX_HAVE_INET6)
     struct sockaddr_in6       *sin6;
     ngx_mail_in6_addr_t       *addr6;
@@ -145,26 +143,35 @@ ngx_mail_init_connection(ngx_connection_t *c)
 
     ngx_set_connection_log(c, cscf->error_log);
 
-    len = ngx_sock_ntop(c->sockaddr, c->socklen, text, NGX_SOCKADDR_STRLEN, 1);
-
-    ngx_log_error(NGX_LOG_INFO, c->log, 0, "*%uA client %*s connected to %V",
-                  c->number, len, text, s->addr_text);
-
     ctx = ngx_palloc(c->pool, sizeof(ngx_mail_log_ctx_t));
     if (ctx == NULL) {
         ngx_mail_close_connection(c);
         return;
     }
 
-    ctx->client = &c->addr_text;
+    ctx->client.data = ngx_pnalloc(c->pool, NGX_SOCKADDR_STRLEN);
+    if (ctx->client.data == NULL) {
+        ngx_mail_close_connection(c);
+        return;
+    }
+
+    ctx->client.len = ngx_sock_ntop(c->sockaddr, c->socklen, ctx->client.data,
+                                  NGX_SOCKADDR_STRLEN, 1);
+
     ctx->session = s;
 
     c->log->connection = c->number;
     c->log->handler = ngx_mail_log_error;
+    c->log->handler_name = ngx_mail_log_prop(MAIL);
     c->log->data = ctx;
-    c->log->action = "sending client greeting line";
-
+    c->log->action = "initializing session";
     c->log_error = NGX_ERROR_INFO;
+
+    ngx_log_add_tag(c->log, ngx_mail_log_tag(MAIL_TAG));
+
+    ngx_log_error(NGX_LOG_INFO, c->log, 0, "client connected");
+
+    c->log->action = "sending client greeting line";
 
     rev = c->read;
     rev->handler = ngx_mail_init_session_handler;
@@ -1277,7 +1284,7 @@ ngx_mail_log_error(ngx_log_t *log, u_char *buf, size_t len)
     ctx = log->data;
     s = ctx->session;
 
-    ngx_log_add_tag(log, "mail");
+    ngx_log_add_tag(log, ngx_mail_log_tag(MAIL_TAG));
 
     if (s) {
         cscf = ngx_mail_get_module_srv_conf(s, ngx_mail_core_module);
@@ -1287,7 +1294,16 @@ ngx_mail_log_error(ngx_log_t *log, u_char *buf, size_t len)
             utags = cscf->error_log_user_tags->elts;
 
             for (i = 0; i < cscf->error_log_user_tags->nelts; i++) {
-                ngx_log_add_str_tag(log, &utags[i]);
+
+                if (utags[i].len == 0) {
+                    continue;
+                }
+
+                if (ngx_log_add_user_tag(log, &utags[i], s->connection->pool)
+                    != NGX_OK)
+                {
+                    return buf;
+                }
             }
         }
     }
@@ -1297,7 +1313,7 @@ ngx_mail_log_error(ngx_log_t *log, u_char *buf, size_t len)
     }
 
     p = ngx_log_property(log, p, last, ngx_mail_log_prop(CLIENT), "%V",
-                         ctx->client);
+                         &ctx->client);
 
 
     if (s == NULL) {

@@ -76,11 +76,15 @@ struct ngx_log_filter_s {
 
 static u_char *ngx_log_create_message(ngx_log_t *log, ngx_log_params_t *lp,
     const char *fmt, va_list args);
+static u_char *ngx_log_create_message_esc(ngx_log_t *log, ngx_log_params_t *lp,
+    const char *fmt, va_list args);
 static ngx_int_t ngx_log_check_rate(ngx_log_t *log, ngx_uint_t level);
 static char *ngx_error_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_log_set_params(ngx_conf_t *cf, ngx_log_t *log);
 static void ngx_log_insert(ngx_log_t *log, ngx_log_t *new_log);
 
+static char *ngx_log_set_format(ngx_conf_t *cf, ngx_log_t *log,
+    ngx_str_t *value);
 static char *ngx_log_add_filter(ngx_conf_t *cf, ngx_log_t *log,
     ngx_str_t *value);
 static char *ngx_log_filter_set_rule(ngx_conf_t *cf,
@@ -97,6 +101,19 @@ static ngx_int_t ngx_log_conf_add_property(ngx_log_conf_t *lcf, ngx_log_t *log,
 
 static void *ngx_log_create_conf(ngx_cycle_t *cycle);
 static char *ngx_log_init_conf(ngx_cycle_t *cycle, void *conf);
+
+static u_char *ngx_log_create_json_message(ngx_log_t *log, ngx_log_params_t *lp,
+    const char *fmt, va_list args);
+static u_char *ngx_log_run_handler(ngx_log_t *log, u_char *buf, u_char *last,
+    void *data);
+static ngx_int_t ngx_log_json_errno(ngx_json_escape_t *ctx, ngx_err_t err);
+static ngx_int_t ngx_log_json_escape_inplace(ngx_json_escape_t *ctx, u_char *p,
+    size_t len);
+static ngx_int_t ngx_log_json_push_tags(ngx_json_escape_t *root,
+    ngx_log_tag_t *tags);
+static void ngx_log_filter_tag(ngx_log_t *log, ngx_str_t *tag);
+static void ngx_log_save_tag(ngx_log_t *log, ngx_log_tag_t *ltag);
+
 
 #if (NGX_DEBUG)
 
@@ -175,11 +192,25 @@ static const char *debug_levels[] = {
 
 
 ngx_log_property_t  ngx_core_log_properties[] = {
-    #define NGX_X(id, key, name)  ngx_log_prop_decl(key, name, "core"),
+    #define NGX_X(id, name, type)  ngx_log_prop_decl(name, "core", type),
     NGX_CORE_LOG_PROP_LIST
     #undef NGX_X
 };
 
+
+
+static ngx_inline u_char *
+ngx_log_create_message_esc(ngx_log_t *log, ngx_log_params_t *lp,
+    const char *fmt, va_list args)
+{
+    switch (log->format.type) {
+    case NGX_STR_ESCAPE_JSON:
+        return ngx_log_create_json_message(log, lp, fmt, args);
+
+    default:
+        return ngx_log_create_message(log, lp, fmt, args);
+    }
+}
 
 
 static u_char *
@@ -317,13 +348,16 @@ ngx_log_error_core(ngx_uint_t level, ngx_log_t *log, const char *filename,
         log->data = head->data;
         log->connection = head->connection;
         log->action = head->action;
+        log->handler_name = head->handler_name;
+
+        log->tags = NULL;
 
         if (log->filter) {
             ngx_log_filter_init(log->filter);
         }
 
         va_start(args, fmt);
-        p = ngx_log_create_message(log, &lp, fmt, args);
+        p = ngx_log_create_message_esc(log, &lp, fmt, args);
         va_end(args);
 
         if (log->filter
@@ -380,7 +414,7 @@ ngx_log_error_core(ngx_uint_t level, ngx_log_t *log, const char *filename,
     lp.console = 1;
 
     va_start(args, fmt);
-    p = ngx_log_create_message(head, &lp, fmt, args);
+    p = ngx_log_create_message_esc(head, &lp, fmt, args);
     va_end(args);
 
     (void) ngx_write_console(ngx_stderr, errstr, p - errstr);
@@ -871,6 +905,8 @@ ngx_log_set_params(ngx_conf_t *cf, ngx_log_t *log)
     level_set = 0;
     rate = 1000;
 
+    log->format.ctx = NGX_CONF_UNSET_PTR;
+
     for (i = 2; i < cf->args->nelts; i++) {
 
         if (ngx_strncmp(value[i].data, "filter=", 7) == 0) {
@@ -879,6 +915,20 @@ ngx_log_set_params(ngx_conf_t *cf, ngx_log_t *log)
             value[i].len -= 7;
 
             rv = ngx_log_add_filter(cf, log, &value[i]);
+
+            if (rv != NGX_CONF_OK) {
+                return rv;
+            }
+
+            continue;
+        }
+
+        if (ngx_strncmp(value[i].data, "format=", 7) == 0) {
+
+            value[i].data += 7;
+            value[i].len -= 7;
+
+            rv = ngx_log_set_format(cf, log, &value[i]);
 
             if (rv != NGX_CONF_OK) {
                 return rv;
@@ -973,6 +1023,10 @@ ngx_log_set_params(ngx_conf_t *cf, ngx_log_t *log)
         log->limit->rate = rate * 1000;
     }
 
+    if (log->format.ctx == NGX_CONF_UNSET_PTR) {
+        log->format.ctx = NULL;
+    }
+
     return NGX_CONF_OK;
 }
 
@@ -1059,23 +1113,82 @@ ngx_log_memory_cleanup(void *data)
 u_char *
 ngx_log_action(ngx_log_t *log, u_char *buf, u_char *last, const char *action)
 {
-    return ngx_slprintf(buf, last, " while %s", action);
+    ngx_json_escape_t  *ctx;
+
+    switch (log->format.type) {
+
+    case NGX_STR_ESCAPE_JSON:
+
+        ctx = log->format.ctx;
+
+        ngx_json_push_kv(log->format.ctx, 1, "action", "%s", action);
+        log->format.done = 1;
+
+        return ctx->curr;
+
+    default:
+
+        return ngx_slprintf(buf, last, " while %s", action);
+    }
+
 }
 
 
 static ngx_log_property_t ngx_log_default_property =
-    ngx_log_prop_decl("unknown", "unknown", "unknown");
+    ngx_log_prop_decl("unknown", "unknown", NGX_LOG_PT_STR);
+
+static void
+ngx_log_filter_property(ngx_log_t *log, ngx_log_property_t *prop,
+    const char *fmt, va_list args)
+{
+    u_char                 *p;
+    ngx_str_t               raw_field;
+    ngx_uint_t              i;
+    ngx_log_filter_rule_t  *rules, *rule;
+
+    u_char                  tmp[NGX_MAX_ERROR_STR];
+
+    rules = log->filter->rules.elts;
+
+    for (i = 0; i < log->filter->rules.nelts; i++) {
+
+        rule = &rules[i];
+
+        if (rule->part != NGX_LOG_FILTER_FIELD) {
+            continue;
+        }
+
+        if (prop->index != rule->prop_idx) {
+            continue;
+        }
+
+        /* dump found field into temp buffer without escaping to match */
+        p = ngx_vslprintf(tmp, tmp + NGX_MAX_ERROR_STR, fmt, args);
+
+        raw_field.data = tmp;
+        raw_field.len = p - tmp;
+
+        if (ngx_log_filter_rule_match(rule, &raw_field) == NGX_OK) {
+            rule->match = 1;
+        }
+
+        /* multiple rules on same field are not allowed */
+        return;
+    }
+}
+
 
 u_char *
 ngx_log_property(ngx_log_t *log, u_char *buf, u_char *last,
     ngx_log_property_key_t pkey, const char *fmt, ...)
 {
-    u_char                 *p;
-    va_list                 args;
-    ngx_str_t               raw_field;
-    ngx_uint_t              i;
-    ngx_log_property_t     *prop, **props;
-    ngx_log_filter_rule_t  *rules, *rule;
+    u_char              *p;
+    va_list              args;
+    ngx_json_escape_t   *ctx;
+    ngx_log_property_t  *prop, **props;
+
+    /* if the log handler calls ngx_log_property, it is aware of escaping */
+    log->format.done = 1;
 
     if (log->conf) {
         props = log->conf->props.elts;
@@ -1087,40 +1200,28 @@ ngx_log_property(ngx_log_t *log, u_char *buf, u_char *last,
     }
 
     if (log->filter) {
-        u_char  tmp[NGX_MAX_ERROR_STR];
-
-        rules = log->filter->rules.elts;
-
-        for (i = 0; i < log->filter->rules.nelts; i++) {
-
-            rule = &rules[i];
-
-            if (rule->part != NGX_LOG_FILTER_FIELD) {
-                continue;
-            }
-
-            if (prop->index != rule->prop_idx) {
-                continue;
-            }
-
-            /* dump found field into temp buffer */
-            va_start(args, fmt);
-            p = ngx_vslprintf(tmp, tmp + NGX_MAX_ERROR_STR, fmt, args);
-            va_end(args);
-
-            raw_field.data = tmp;
-            raw_field.len = p - tmp;
-
-            if (ngx_log_filter_rule_match(rule, &raw_field) == NGX_OK) {
-                rule->match = 1;
-            }
-
-            /* multiple rules on same field are not allowed */
-            break;
-        }
+        va_start(args, fmt);
+        ngx_log_filter_property(log, prop, fmt, args);
+        va_end(args);
     }
 
-    p = ngx_slprintf(buf, last, ", %V: \"", &prop->name);
+    if (log->format.type == NGX_STR_ESCAPE_JSON) {
+        ctx = log->format.ctx;
+        va_start(args, fmt);
+        ngx_json_vpush_kv(ctx, 1, (prop->type == NGX_LOG_PT_STR),
+                          (char *) prop->name.data, fmt, args);
+        va_end(args);
+
+        return ctx->curr;
+    }
+
+    /* default plain text log */
+    if (prop->type == NGX_LOG_PT_STR) {
+        p = ngx_slprintf(buf, last, ", %V: \"", &prop->name);
+
+    } else {
+        p = ngx_slprintf(buf, last, ", %V: ", &prop->name);
+    }
 
     va_start(args, fmt);
     p = ngx_vslprintf(p, last, fmt, args);
@@ -1130,17 +1231,294 @@ ngx_log_property(ngx_log_t *log, u_char *buf, u_char *last,
         return p;
     }
 
-    *p++ = '"';
+    if (prop->type == NGX_LOG_PT_STR) {
+        *p++ = '"';
+    }
 
     return p;
 }
 
 
+static ngx_log_property_t *
+ngx_log_get_property(ngx_log_t *log, ngx_log_property_key_t pkey)
+{
+    ngx_log_property_t     *prop, **props;
+
+    if (log->conf) {
+        props = log->conf->props.elts;
+        prop = props[pkey.id];
+
+    } else {
+        /* very early or late logging */
+        prop = &ngx_log_default_property;
+    }
+
+    return prop;
+}
+
 u_char *
 ngx_log_object(ngx_log_t *log, u_char *buf, u_char *last,
     ngx_log_property_key_t key, ngx_log_ext_handler_pt handler, void *data)
 {
-    return handler(log, buf, last, data);
+    u_char              *p, *start;
+    ngx_json_escape_t    ctx, *root;
+    ngx_log_property_t  *prop;
+
+    switch (log->format.type) {
+
+    case NGX_STR_ESCAPE_JSON:
+
+        root = log->format.ctx;
+
+        prop = ngx_log_get_property(log, key);
+
+        if (ngx_json_push_key(root, (char *) prop->name.data) != NGX_OK) {
+            return buf;
+        }
+
+        start = root->curr;
+
+        /* we pushed the key ok, so we have enough to start object */
+        ngx_json_start(&ctx, NGX_JSON_OBJ, root->curr, root->last);
+
+        log->format.ctx = &ctx;
+
+        /*
+         * the log handler that is aware of escaping will set this to true;
+         *   if true, the buffer contains formatted object
+         *   if false, the buffer contains plain string
+         */
+        log->format.done = 0;
+
+        p = handler(log, ctx.curr, ctx.last, data);
+
+        log->format.ctx = root;
+
+        if (log->format.done) {
+            /* happy path: we've got an object */
+            p = ngx_json_end(&ctx);
+
+        } else {
+            /* need to escape the raw string */
+
+            /* rollback position to key end: skip object */
+            ctx.curr = start;
+
+            /* does not fail: we have enough for empty quoted string */
+            ngx_log_json_escape_inplace(&ctx, start + 1, p - start - 1);
+
+            p = ctx.curr;
+        }
+
+        root->truncated |= ctx.truncated;
+        root->curr = p;
+
+        return p;
+
+    default:
+
+        return handler(log, buf, last, data);
+    }
+}
+
+
+/*
+ * this is a separate function to avoid creating extra buffer on stack on
+ * each ngx_log_object invocation;
+ * the len passed must be within limits of NGX_MAX_ERROR_STR.
+ */
+static ngx_int_t
+ngx_log_json_escape_inplace(ngx_json_escape_t *ctx, u_char *p, size_t len)
+{
+    ngx_str_t  str;
+    u_char     tmp[NGX_MAX_ERROR_STR];
+
+    ngx_memcpy(tmp, p, len);
+
+    str.data = tmp;
+    str.len = len;
+
+    return ngx_json_push_string(ctx, &str);
+}
+
+
+static u_char *
+ngx_log_create_json_message(ngx_log_t *log, ngx_log_params_t *lp,
+    const char *fmt, va_list args)
+{
+    u_char              *p;
+    ngx_tm_t             tm;
+    ngx_str_t            stime;
+    ngx_json_escape_t   *ctx;
+    ngx_log_property_t  *prop;
+    u_char               iso8601[sizeof("1970-01-01T00:00:00.000Z") - 1];
+
+    static ngx_str_t trunc = ngx_string(",\"truncated\":true");
+
+    lp->last -= NGX_LINEFEED_SIZE; /* reserve place for final newline */
+
+    ctx = log->format.ctx;
+
+    /* error log buffer is big enough to fit header, so no retval checks */
+
+    ngx_json_start(ctx, NGX_JSON_OBJ, lp->buf, lp->last);
+
+    ctx->last -= trunc.len;
+
+    ngx_gmtime(ngx_cached_time->sec, &tm);
+
+    p =  ngx_sprintf(iso8601, "%4d-%02d-%02dT%02d:%02d:%02d",
+                    tm.ngx_tm_year, tm.ngx_tm_mon, tm.ngx_tm_mday,
+                    tm.ngx_tm_hour, tm.ngx_tm_min, tm.ngx_tm_sec);
+
+    if (ngx_cached_time->msec) {
+        p = ngx_sprintf(p, ".%03ui", ngx_cached_time->msec);
+    }
+
+    *p++ = 'Z';
+
+    stime.data = iso8601;
+    stime.len = p - iso8601;
+
+    ngx_json_push_kv(ctx, 1, "time", "%V", &stime);
+
+    ngx_json_push_kv(ctx, 1, "level", "%V", &err_levels[lp->level]);
+
+    ngx_json_push_kv(ctx, 0, "pid", "%P", ngx_log_pid);
+
+    ngx_json_push_kv(ctx, 0, "tid", NGX_TID_T_FMT, ngx_log_tid);
+
+    if (log->connection) {
+        ngx_json_push_kv(ctx, 0, "connection", "%uA", log->connection);
+    }
+
+#if (NGX_DEBUG)
+    if (lp->filename) {
+        ngx_json_push_kv(ctx, 1, "src", "%s", lp->filename);
+    }
+#endif
+
+    /*
+     * with JSON, full message is escaped, so in order to match
+     * "filter=msg:foo" the string must be escaped;
+     *
+     * to match literally, use 'filter=field:message:foo'
+     */
+    lp->msg.data = ctx->curr;
+
+    prop = ngx_log_get_property(log, ngx_core_log_prop(MESSAGE));
+
+    if (log->filter) {
+        va_list  filter_args;
+
+        va_copy(filter_args, args);
+        ngx_log_filter_property(log, prop, fmt, filter_args);
+        va_end(filter_args);
+    }
+
+    ngx_json_vpush_kv(ctx, 1, (prop->type == NGX_LOG_PT_STR),
+                      (char *) prop->name.data, fmt, args);
+
+    lp->msg.len = ctx->curr - lp->msg.data;
+
+    if (lp->err) {
+        ngx_log_json_errno(ctx, lp->err);
+    }
+
+    if (lp->level != NGX_LOG_DEBUG && log->handler) {
+        /* json log uses buf pointers from log->format.ctx */
+        (void) ngx_log_object(log, ctx->curr, ctx->last,
+                       (log->handler_name.id == ngx_core_log_prop(NULLPROP).id)
+                              ? ngx_core_log_prop(CONTEXT) : log->handler_name,
+                              ngx_log_run_handler, NULL);
+    }
+
+    /* the message can be big and fill the whole buffer, and truncate json */
+
+    if (!ctx->truncated && log->tags) {
+        (void) ngx_log_json_push_tags(ctx, log->tags);
+    }
+
+    if (ctx->truncated) {
+        ctx->curr = ngx_cpymem(ctx->curr, trunc.data, trunc.len);
+    }
+
+    p = ngx_json_end(ctx);
+
+    ngx_linefeed(p);
+
+    return p;
+}
+
+
+static ngx_int_t
+ngx_log_json_push_tags(ngx_json_escape_t *root, ngx_log_tag_t *tags)
+{
+    u_char             *p;
+    ngx_log_tag_t      *tl;
+    ngx_json_escape_t   ctx;
+
+    if (ngx_json_push_key(root, "tags") != NGX_OK) {
+        return NGX_DECLINED;
+    }
+
+    if (ngx_json_start(&ctx, NGX_JSON_ARR, root->curr, root->last) != NGX_OK) {
+        root->truncated = 1;
+        return NGX_DECLINED;
+    }
+
+    for (tl = tags; tl; tl = tl->next) {
+        if (ngx_json_push_string_item(&ctx, &tl->str) != NGX_OK) {
+            break;
+        }
+    }
+
+    p = ngx_json_end(&ctx);
+
+    root->truncated |= ctx.truncated;
+    root->curr = p;
+
+    return NGX_OK;
+}
+
+
+static u_char *
+ngx_log_run_handler(ngx_log_t *log, u_char *buf, u_char *last, void *data)
+{
+    return log->handler(log, buf, last - buf);
+}
+
+
+static ngx_int_t
+ngx_log_json_errno(ngx_json_escape_t *root, ngx_err_t err)
+{
+    u_char            *p;
+    ngx_str_t          msg;
+    ngx_json_escape_t  ctx;
+
+    msg.data = ngx_strerror_get(err, &msg.len);
+
+    if (ngx_json_push_key(root, "error") != NGX_OK) {
+        return NGX_DECLINED;
+    }
+
+    if (ngx_json_start(&ctx, NGX_JSON_OBJ, root->curr, root->last)
+        != NGX_OK)
+    {
+        root->truncated = 1;
+        return NGX_DECLINED;
+    }
+
+    /* TODO: filter by error code/error message fields ? */
+    ngx_json_push_kv(&ctx, 0, "code", "%d", err);
+    ngx_json_push_kv(&ctx, 1, "message", "%V", &msg);
+
+    p = ngx_json_end(&ctx);
+
+    root->truncated |= ctx.truncated;
+    root->curr = p;
+
+    return NGX_OK;
 }
 
 
@@ -1379,6 +1757,38 @@ ngx_log_filter_apply_rules(ngx_log_t *log, ngx_log_params_t *lp)
 }
 
 
+static char *
+ngx_log_set_format(ngx_conf_t *cf, ngx_log_t *log, ngx_str_t *value)
+{
+    /* log->format is initially zeroed */
+
+    if (log->format.ctx != NGX_CONF_UNSET_PTR) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "duplicate format= parameter (\"%V\")", value);
+        return NGX_CONF_ERROR;
+    }
+
+    if (ngx_strcmp(value->data, "json") == 0) {
+        log->format.type = NGX_STR_ESCAPE_JSON;
+
+        log->format.ctx = ngx_pcalloc(cf->pool, sizeof(ngx_json_escape_t));
+        if (log->format.ctx == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+    } else if (ngx_strcmp(value->data, "default") == 0) {
+        log->format.ctx = NULL;
+
+    } else {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "unknown log format \"%V\"", value);
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+
+
 static ngx_int_t
 ngx_log_filter_rule_match(ngx_log_filter_rule_t *rule, ngx_str_t *str)
 {
@@ -1420,14 +1830,51 @@ ngx_log_filter_rule_match(ngx_log_filter_rule_t *rule, ngx_str_t *str)
 
 
 void
-ngx_log_add_str_tag(ngx_log_t *log, ngx_str_t *tag)
+ngx_log_add_tag(ngx_log_t *log, ngx_log_tag_t *ltag)
+{
+    if (log->filter) {
+        ngx_log_filter_tag(log, &ltag->str);
+    }
+
+    if (!log->need_tags) {
+        return;
+    }
+
+    ngx_log_save_tag(log, ltag);
+}
+
+
+ngx_int_t
+ngx_log_add_user_tag(ngx_log_t *log, ngx_str_t *tag, ngx_pool_t *pool)
+{
+    ngx_log_tag_t  *ltag;
+
+    if (log->filter) {
+        ngx_log_filter_tag(log, tag);
+    }
+
+    if (!log->need_tags) {
+        return NGX_OK;
+    }
+
+    ltag = ngx_pcalloc(pool, sizeof(ngx_log_tag_t));
+    if (ltag == NULL) {
+        return NGX_ERROR;
+    }
+
+    ltag->str = *tag;
+
+    ngx_log_save_tag(log, ltag);
+
+    return NGX_OK;
+}
+
+
+static void
+ngx_log_filter_tag(ngx_log_t *log, ngx_str_t *tag)
 {
     ngx_uint_t              i;
     ngx_log_filter_rule_t  *rules;
-
-    if (log->filter == NULL) {
-        return;
-    }
 
     rules = log->filter->rules.elts;
 
@@ -1444,6 +1891,40 @@ ngx_log_add_str_tag(ngx_log_t *log, ngx_str_t *tag)
 }
 
 
+static void
+ngx_log_save_tag(ngx_log_t *log, ngx_log_tag_t *ltag)
+{
+    ngx_str_t       tag;
+    ngx_log_tag_t  *tl;
+
+    if (log->tags == NULL) {
+        log->tags = ltag;
+        ltag->next = NULL;
+        return;
+    }
+
+    tag.data = ltag->str.data;
+    tag.len = ltag->str.len;
+
+    for (tl = log->tags ;; tl = tl->next ) {
+        if (tl->str.len == tag.len
+            && ngx_strncmp(tl->str.data, tag.data, tag.len) == 0)
+        {
+            /* such tag was already added, ignore */
+            return;
+        }
+
+        if (tl->next == NULL) {
+            break;
+        }
+    }
+
+    tl->next = ltag;
+    ltag->next = NULL;
+
+}
+
+
 static ngx_int_t
 ngx_log_conf_add_property(ngx_log_conf_t *lcf, ngx_log_t *log,
     ngx_log_property_t *prop)
@@ -1457,7 +1938,7 @@ ngx_log_conf_add_property(ngx_log_conf_t *lcf, ngx_log_t *log,
         if (props[i] == prop) {
             ngx_log_error(NGX_LOG_EMERG, log, 0,
                           "attempt to add duplicate log property: %V",
-                          &prop->key);
+                          &prop->name);
             return NGX_ERROR;
         }
     }
@@ -1509,7 +1990,7 @@ ngx_log_create_conf(ngx_cycle_t *cycle)
         return NULL;
     }
 
-#define NGX_X(id, key, name)                                                  \
+#define NGX_X(id, name, type)                                                 \
     if (ngx_log_conf_add_property(lcf, cycle->log,                            \
                            &ngx_core_log_properties[NGX_CORE_LOG_PROP__##id]) \
         != NGX_OK)                                                            \
@@ -1528,8 +2009,8 @@ ngx_log_init_conf(ngx_cycle_t *cycle, void *conf)
 {
     ngx_log_conf_t *lcf = conf;
 
-    ngx_uint_t               i, j, k, found;
     ngx_str_t               *item, *key;
+    ngx_uint_t               i, j, k, found;
     ngx_log_ref_t           *lref;
     ngx_log_property_t    **props;
     ngx_log_filter_rule_t   *rules, *rule;
@@ -1538,6 +2019,11 @@ ngx_log_init_conf(ngx_cycle_t *cycle, void *conf)
 
     /* process all user-defined logs to check for invalid properties */
     for (i = 0; i < lcf->logs.nelts; i++) {
+
+        if (lref[i].log->format.type == NGX_STR_ESCAPE_JSON) {
+            /* with JSON, tags are shown in log file as array */
+            lref[i].log->need_tags = 1;
+        }
 
         if (lref[i].log->filter == NULL) {
             continue;
@@ -1560,7 +2046,11 @@ ngx_log_init_conf(ngx_cycle_t *cycle, void *conf)
             props = lcf->props.elts;
             for (k = 0; k < lcf->props.nelts; k++) {
 
-                key = &props[k]->key;
+                if (props[k]->type == NGX_LOG_PT_TAG) {
+                    continue;
+                }
+
+                key = &props[k]->name;
 
                 if (key->len != item->len) {
                     continue;
@@ -1611,8 +2101,11 @@ ngx_show_log_filters_info(ngx_cycle_t *cycle)
     props = lcf->props.elts;
 
     for (i = 0; i < lcf->props.nelts; i++) {
+        if (props[i]->type == NGX_LOG_PT_TAG) {
+            continue;
+        }
         ngx_write_stderr("  ");
-        ngx_write_fd(ngx_stderr, props[i]->key.data, props[i]->key.len);
+        ngx_write_fd(ngx_stderr, props[i]->name.data, props[i]->name.len);
         ngx_write_fd(ngx_stderr, " (", 2);
         ngx_write_stderr((char *) props[i]->module);
         ngx_write_fd(ngx_stderr, " module)\n", 9);
