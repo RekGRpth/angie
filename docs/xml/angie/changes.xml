@@ -7,6 +7,15 @@
 
 <changes ver="1.12.0" date="">
 
+<change type="bugfix">
+<para lang="ru">
+директива proxy_no_cache не учитывалась при кэшировании ошибок.
+</para>
+<para lang="en">
+the "proxy_no_cache" directive was not checked when caching errors.
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 получение сертификатов для IP-адресов по протоколу ACME.
@@ -70,6 +79,18 @@ ACME module was not functional with "select" and "poll" event processing modules
 <para lang="en">
 reduced CPU usage when using the "status_zone" directive with
 variables in the HTTP and stream modules under intensive load.
+</para>
+</change>
+
+<change type="feature">
+<para lang="ru">
+встроенные HTML-страницы ошибок и страница листинга директорий AutoIndex-модуля
+теперь поддерживают тёмную цветовую схему в соответствии с системными
+настройками пользователя.
+</para>
+<para lang="en">
+built-in HTML error pages and the directory listing page of the AutoIndex module
+now support dark color scheme following the user's OS-level preference.
 </para>
 </change>
 
