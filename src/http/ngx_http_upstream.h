@@ -48,6 +48,7 @@
 
 #define NGX_HTTP_UPSTREAM_INVALID_HEADER     40
 #define NGX_HTTP_UPSTREAM_EARLY_HINTS        41
+#define NGX_HTTP_UPSTREAM_RECONNECT          42
 
 /* zero indicates no sticky */
 #define NGX_HTTP_UPSTREAM_STICKY_STATUS_NEW  1
@@ -73,6 +74,7 @@
 
 
 typedef struct {
+    int                              transport;
     ngx_uint_t                       status;
     ngx_msec_t                       response_time;
     ngx_msec_t                       connect_time;
@@ -160,6 +162,8 @@ struct ngx_http_upstream_srv_conf_s {
     ngx_uint_t                       line;
     in_port_t                        port;
     ngx_uint_t                       no_port;  /* unsigned no_port:1 */
+
+    ngx_uint_t                       rt_factor;
 
 #if (NGX_HTTP_UPSTREAM_ZONE)
     ngx_shm_zone_t                  *shm_zone;
@@ -499,6 +503,12 @@ ngx_int_t ngx_http_upstream_merge_ssl_passwords(ngx_conf_t *cf,
     ngx_http_upstream_conf_t *conf, ngx_http_upstream_conf_t *prev);
 ngx_int_t ngx_http_upstream_preserve_ssl_passwords(ngx_conf_t *cf,
     ngx_http_upstream_conf_t *conf, ngx_http_upstream_conf_t *prev);
+#endif
+
+#if (NGX_API && NGX_HTTP_UPSTREAM_ZONE)
+void ngx_http_upstream_stat(ngx_peer_connection_t *pc, ngx_uint_t state);
+void ngx_http_upstream_stat_locked(ngx_peer_connection_t *pc,
+    ngx_uint_t state);
 #endif
 
 #if (NGX_HTTP_V3)

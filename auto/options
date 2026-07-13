@@ -98,6 +98,7 @@ HTTP_GRPC=YES
 HTTP_TUNNEL=YES
 HTTP_PERL=NO
 HTTP_MEMCACHED=YES
+HTTP_DOH=YES
 HTTP_LIMIT_CONN=YES
 HTTP_LIMIT_REQ=YES
 HTTP_EMPTY_GIF=YES
@@ -113,6 +114,7 @@ HTTP_CLIENT=NO
 HTTP_UPSTREAM_HASH=YES
 HTTP_UPSTREAM_IP_HASH=YES
 HTTP_UPSTREAM_LEAST_CONN=YES
+HTTP_UPSTREAM_LEAST_TIME=YES
 HTTP_UPSTREAM_RANDOM=YES
 HTTP_UPSTREAM_KEEPALIVE=YES
 HTTP_UPSTREAM_ZONE=YES
@@ -143,6 +145,7 @@ STREAM_PASS=YES
 STREAM_SET=YES
 STREAM_UPSTREAM_HASH=YES
 STREAM_UPSTREAM_LEAST_CONN=YES
+STREAM_UPSTREAM_LEAST_TIME=YES
 STREAM_UPSTREAM_RANDOM=YES
 STREAM_UPSTREAM_ZONE=YES
 STREAM_UPSTREAM_STICKY=YES
@@ -314,6 +317,7 @@ $0: warning: the \"--with-ipv6\" option is deprecated"
         --without-http_grpc_module)      HTTP_GRPC=NO               ;;
         --without-http_tunnel_module)    HTTP_TUNNEL=NO             ;;
         --without-http_memcached_module) HTTP_MEMCACHED=NO          ;;
+        --without-http_doh_module)       HTTP_DOH=NO                ;;
         --without-http_limit_conn_module) HTTP_LIMIT_CONN=NO        ;;
         --without-http_limit_req_module) HTTP_LIMIT_REQ=NO         ;;
         --without-http_empty_gif_module) HTTP_EMPTY_GIF=NO          ;;
@@ -322,6 +326,8 @@ $0: warning: the \"--with-ipv6\" option is deprecated"
         --without-http_upstream_ip_hash_module) HTTP_UPSTREAM_IP_HASH=NO ;;
         --without-http_upstream_least_conn_module)
                                          HTTP_UPSTREAM_LEAST_CONN=NO ;;
+        --without-http_upstream_least_time_module)
+                                         HTTP_UPSTREAM_LEAST_TIME=NO ;;
         --without-http_upstream_random_module)
                                          HTTP_UPSTREAM_RANDOM=NO    ;;
         --without-http_upstream_keepalive_module) HTTP_UPSTREAM_KEEPALIVE=NO ;;
@@ -386,6 +392,8 @@ use the \"--with-mail_ssl_module\" option instead"
                                          STREAM_UPSTREAM_HASH=NO    ;;
         --without-stream_upstream_least_conn_module)
                                          STREAM_UPSTREAM_LEAST_CONN=NO ;;
+        --without-stream_upstream_least_time_module)
+                                         STREAM_UPSTREAM_LEAST_TIME=NO ;;
         --without-stream_upstream_random_module)
                                          STREAM_UPSTREAM_RANDOM=NO  ;;
         --without-stream_upstream_zone_module)
@@ -555,6 +563,7 @@ cat << END
   --without-http_grpc_module         disable ngx_http_grpc_module
   --without-http_tunnel_module       disable ngx_http_tunnel_module
   --without-http_memcached_module    disable ngx_http_memcached_module
+  --without-http_doh_module          disable ngx_http_doh_module
   --without-http_limit_conn_module   disable ngx_http_limit_conn_module
   --without-http_limit_req_module    disable ngx_http_limit_req_module
   --without-http_empty_gif_module    disable ngx_http_empty_gif_module
@@ -565,6 +574,8 @@ cat << END
                                      disable ngx_http_upstream_ip_hash_module
   --without-http_upstream_least_conn_module
                                      disable ngx_http_upstream_least_conn_module
+  --without-http_upstream_least_time_module
+                                     disable ngx_http_upstream_least_time_module
   --without-http_upstream_random_module
                                      disable ngx_http_upstream_random_module
   --without-http_upstream_keepalive_module
@@ -627,6 +638,8 @@ cat << END
                                      disable ngx_stream_upstream_hash_module
   --without-stream_upstream_least_conn_module
                                      disable ngx_stream_upstream_least_conn_module
+  --without-stream_upstream_least_time_module
+                                     disable ngx_stream_upstream_least_time_module
   --without-stream_upstream_random_module
                                      disable ngx_stream_upstream_random_module
   --without-stream_upstream_zone_module

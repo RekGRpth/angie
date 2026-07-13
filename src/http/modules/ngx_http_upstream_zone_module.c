@@ -169,6 +169,18 @@ static ngx_api_entry_t  ngx_api_http_upstream_peer_health_entries[] = {
         .handler   = ngx_api_http_upstream_peer_downstart_handler,
     },
 
+    {
+        .name      = ngx_string("header_time"),
+        .handler   = ngx_api_http_upstream_peer_struct_msec_handler,
+        .data.off  = offsetof(ngx_http_upstream_rr_peer_t, header_time)
+    },
+
+    {
+        .name      = ngx_string("response_time"),
+        .handler   = ngx_api_http_upstream_peer_struct_msec_handler,
+        .data.off  = offsetof(ngx_http_upstream_rr_peer_t, response_time)
+    },
+
     ngx_api_null_entry
 };
 
@@ -863,6 +875,8 @@ ngx_http_upstream_zone_new_peer(ngx_http_upstream_rr_peers_t *peers,
     peer->server.len = server->len;
     ngx_memcpy(peer->server.data, server->data, server->len);
 
+    peer->average = -1;
+
     if (template->host->service.len == 0) {
         peer->weight = template->weight;
 
@@ -899,6 +913,79 @@ ngx_http_upstream_zone_new_peer(ngx_http_upstream_rr_peers_t *peers,
 
 
 #if (NGX_API)
+
+/*
+ * Record per-peer statistics (caller holds no locks).
+ */
+void
+ngx_http_upstream_stat(ngx_peer_connection_t *pc, ngx_uint_t state)
+{
+    ngx_http_upstream_rr_peer_data_t  *rrp = pc->data;
+    ngx_http_upstream_rr_peer_t       *peer = rrp->current;
+
+    ngx_http_upstream_rr_peers_rlock(rrp->peers);
+    ngx_http_upstream_rr_peer_lock(rrp->peers, peer);
+
+    ngx_http_upstream_stat_locked(pc, state);
+
+    ngx_http_upstream_rr_peer_unlock(rrp->peers, peer);
+    ngx_http_upstream_rr_peers_unlock(rrp->peers);
+}
+
+
+/*
+ * Record per-peer statistics (caller must hold rrp->peers rlock
+ * and peer lock).
+ */
+void
+ngx_http_upstream_stat_locked(ngx_peer_connection_t *pc, ngx_uint_t state)
+{
+    ngx_time_t                        *tp;
+    ngx_uint_t                         code, idx;
+    ngx_connection_t                  *c;
+    ngx_http_request_t                *r;
+    ngx_http_upstream_t               *u;
+    ngx_http_upstream_rr_peer_t       *peer;
+    ngx_http_upstream_rr_peer_data_t  *rrp;
+
+    rrp = pc->data;
+    peer = rrp->current;
+
+    if (state & NGX_PEER_FAILED) {
+        peer->stats.fails++;
+
+        if (peer->max_fails && peer->fails == peer->max_fails) {
+            peer->stats.unavailable++;
+
+            tp = ngx_timeofday();
+            peer->stats.downstart = (uint64_t) tp->sec * 1000 + tp->msec;
+        }
+    }
+
+    c = pc->connection;
+
+    if (c == NULL) {
+        /*
+         * immediate fail of establishing connection
+         * in ngx_event_connect_peer()
+         */
+        return;
+    }
+
+    r = pc->ctx;
+    u = r->upstream;
+
+    if (u->state->status) {
+        code = u->state->status;
+        idx = (code >= 100 && code <= 599) ? code - 100 : 500;
+
+        peer->stats.responses[idx]++;
+    }
+
+    peer->stats.sent += c->sent;
+    peer->stats.received += u->state->bytes_received;
+}
+
 
 static ngx_int_t
 ngx_api_http_upstreams_handler(ngx_api_entry_data_t data, ngx_api_ctx_t *actx,
@@ -1048,6 +1135,16 @@ ngx_api_http_upstream_peer_struct_int64_handler(ngx_api_entry_data_t data,
     ngx_api_http_upstream_peers_ctx_t  *pctx = ctx;
 
     return ngx_api_struct_int64_handler(data, actx, pctx->peer);
+}
+
+
+ngx_int_t
+ngx_api_http_upstream_peer_struct_msec_handler(ngx_api_entry_data_t data,
+    ngx_api_ctx_t *actx, void *ctx)
+{
+    ngx_api_http_upstream_peers_ctx_t  *pctx = ctx;
+
+    return ngx_api_struct_msec_handler(data, actx, pctx->peer);
 }
 
 
