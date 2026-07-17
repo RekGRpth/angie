@@ -1565,8 +1565,8 @@ static ngx_http_metric_node_t *
 ngx_http_metric_find_node_locked(ngx_http_metric_ctx_t *mctx,
     ngx_uint_t hash, ngx_str_t key, u_char **endptr)
 {
-    u_char                  *end, *pos;
     size_t                   chunk;
+    u_char                  *end, *pos;
     ngx_int_t                rc;
     ngx_str_t                tmp;
     ngx_rbtree_node_t       *rbt, *sentinel;
@@ -1579,34 +1579,39 @@ ngx_http_metric_find_node_locked(ngx_http_metric_ctx_t *mctx,
 
         if (hash < rbt->key) {
             rbt = rbt->left;
-            continue;
+            goto next;
         }
 
         if (hash > rbt->key) {
             rbt = rbt->right;
-            continue;
+            goto next;
         }
 
-        /* hash = rbt->key */
+        /* hash == rbt->key */
 
         node = (ngx_http_metric_node_t *) &rbt->color;
+
+        if (key.len < node->key_len) {
+            rbt = rbt->left;
+            goto next;
+        }
+
+        if (key.len > node->key_len) {
+            rbt = rbt->right;
+            goto next;
+        }
+
+        /* key.len == node->key_len */
+
+        tmp = key;
 
         /*
          * the node lock doesn't need to be set,
          * as this part cannot be changed due to the rbtree lock
          */
 
-        if (node->key_len != key.len) {
-            rbt = (node->key_len > key.len) ? rbt->left : rbt->right;
-            continue;
-        }
-
-        /* node->key_len == key.len */
-
         pos = node->key;
         end = (u_char *) rbt + NGX_HTTP_METRIC_DATA_SIZE;
-
-        tmp = key;
 
         for ( ;; ) {
             chunk = ngx_min((size_t) (end - pos), tmp.len);
@@ -1623,6 +1628,8 @@ ngx_http_metric_find_node_locked(ngx_http_metric_ctx_t *mctx,
             if (tmp.len == 0) {
                 break;
             }
+
+            /* switch to the next slab */
 
             tmp.data += chunk;
 
@@ -1818,79 +1825,96 @@ ngx_http_metric_skip_key_locked(ngx_http_metric_node_t *node)
 
 
 static void
-ngx_metric_rbtree_insert_value(ngx_rbtree_node_t *temp,
+ngx_http_metric_rbtree_insert_value(ngx_rbtree_node_t *temp,
     ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
 {
     size_t                    chunk, rest;
     u_char                   *end_m, *end_t, *key_m, *key_t;
-    ngx_rbtree_node_t       **parent;
-    ngx_http_metric_node_t   *node_t, *node_m;
+    ngx_int_t                 rc;
+    ngx_rbtree_node_t       **rbt;
+    ngx_http_metric_node_t   *node_m, *node_t;
+
+    node_m = (ngx_http_metric_node_t *) &node->color;
 
     for ( ;; ) {
 
         if (node->key < temp->key) {
+            rbt = &temp->left;
+            goto next;
+        }
 
-            parent = &temp->left;
+        if (node->key > temp->key) {
+            rbt = &temp->right;
+            goto next;
+        }
 
-        } else if (node->key > temp->key) {
+        /* node->key == temp->key */
 
-            parent = &temp->right;
+        node_t = (ngx_http_metric_node_t *) &temp->color;
 
-        } else { /* node->key == temp->key */
+        if (node_m->key_len < node_t->key_len) {
+            rbt = &temp->left;
+            goto next;
+        }
 
-            parent = &temp->right;
+        if (node_m->key_len > node_t->key_len) {
+            rbt = &temp->right;
+            goto next;
+        }
 
-            node_m = (ngx_http_metric_node_t *) &node->color;
-            node_t = (ngx_http_metric_node_t *) &temp->color;
+        /* node_m->key_len == node_t->key_len */
 
-            if (node_m->key_len != node_t->key_len) {
+        key_m = node_m->key;
+        key_t = node_t->key;
 
-                if (node_m->key_len < node_t->key_len) {
-                    parent = &temp->left;
-                }
+        rest = node_m->key_len;
 
+        /*
+         * the node lock doesn't need to be set,
+         * as this part cannot be changed due to the rbtree lock
+         */
+
+        end_m = ngx_align_ptr(key_m + 1, NGX_HTTP_METRIC_SLAB_SIZE)
+                - NGX_HTTP_METRIC_PTR_SIZE;
+        end_t = ngx_align_ptr(key_t + 1, NGX_HTTP_METRIC_SLAB_SIZE)
+                - NGX_HTTP_METRIC_PTR_SIZE;
+
+        for ( ;; ) {
+            chunk = ngx_min((size_t) (end_m - key_m), rest);
+
+            rc = ngx_memcmp(key_m, key_t, chunk);
+
+            if (rc != 0) {
+                rbt = (rc < 0) ? &temp->left : &temp->right;
+                goto next;
+            }
+
+            rest -= chunk;
+
+            if (rest == 0) {
                 break;
             }
 
-            /* node_m->key_len == node_t->key_len */
+            /* switch to the next slab */
 
-            key_m = node_m->key;
-            key_t = node_t->key;
-
-            end_m = ngx_align_ptr(key_m + 1, NGX_HTTP_METRIC_SLAB_SIZE)
-                    - NGX_HTTP_METRIC_PTR_SIZE;
-            end_t = ngx_align_ptr(key_t + 1, NGX_HTTP_METRIC_SLAB_SIZE)
-                    - NGX_HTTP_METRIC_PTR_SIZE;
-
-            rest = node_m->key_len;
-
-            for ( ;; ) {
-                chunk = ngx_min((size_t) (end_m - key_m), rest);
-
-                if (ngx_memcmp(key_m, key_t, chunk) < 0) {
-                    parent = &temp->left;
-                    break;
-                }
-
-                rest -= chunk;
-
-                if (rest == 0) {
-                    break;
-                }
-
-                ngx_http_metric_slab_next_locked(&key_m, &end_m);
-                ngx_http_metric_slab_next_locked(&key_t, &end_t);
-            }
+            ngx_http_metric_slab_next_locked(&key_m, &end_m);
+            ngx_http_metric_slab_next_locked(&key_t, &end_t);
         }
 
-        if (*parent == sentinel) {
+        /* rc == 0 */
+
+        rbt = &temp->right;
+
+    next:
+
+        if (*rbt == sentinel) {
             break;
         }
 
-        temp = *parent;
+        temp = *rbt;
     }
 
-    *parent = node;
+    *rbt = node;
 
     node->parent = temp;
     node->left = sentinel;
@@ -2026,7 +2050,7 @@ done:
     mctx->shpool->data = mctx->sh;
 
     ngx_rbtree_init(&mctx->sh->rbtree, &mctx->sh->sentinel,
-                    ngx_metric_rbtree_insert_value);
+                    ngx_http_metric_rbtree_insert_value);
 
     ngx_queue_init(&mctx->sh->queue);
 
