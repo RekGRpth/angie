@@ -24,8 +24,8 @@ select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
 my $t = Test::Nginx->new()
-		->has(qw/proxy http_api stream_upstream_zone stream/)
-		->plan(11);
+	->has(qw/proxy http http_api stream_upstream_zone stream/)
+	->plan(12);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -41,7 +41,8 @@ stream {
 
     upstream u1 {
         zone z1 1m;
-        server 127.0.0.1:%%PORT_8081%% max_fails=1 fail_timeout=2s slow_start=5s weight=2;
+        server 127.0.0.1:%%PORT_8081%% max_fails=1 fail_timeout=2s
+                                       slow_start=5s weight=2;
         server 127.0.0.1:%%PORT_8082%% fail_timeout=2s;
      }
 
@@ -67,13 +68,12 @@ http {
 
 EOF
 
+my ($p1, $p2) = (port(8081), port(8082));
 
-$t->run_daemon(\&stream_daemon, port(8081));
-$t->run_daemon(\&stream_daemon, port(8082));
+$t->run_daemon(\&stream_daemon, $p1);
+$t->run_daemon(\&stream_daemon, $p2);
 
 $t->run();
-
-my ($p1, $p2) = (port(8081), port(8082));
 
 ###############################################################################
 
@@ -86,12 +86,12 @@ is($r->{state}, "up", "backend 2 is good on start");
 
 hash_like(many(30, port(8090)), {$p1 => 20, $p2 => 10}, 0, 'weighted');
 
-# fail the peer
+# fail both peers
 $t->stop_daemons();
 
+# ensure peers are now unavailable
 hash_like(many(30, port(8090)), {}, 0, 'down');
 
-# ensure it is now unavailable
 $r = get_json("/api/status/stream/upstreams/u1/peers/127.0.0.1:$p1");
 is($r->{state}, "unavailable", "backend 1 is now unavailable");
 
@@ -99,13 +99,25 @@ $r = get_json("/api/status/stream/upstreams/u1/peers/127.0.0.1:$p2");
 is($r->{state}, "unavailable", "backend 2 is now unavailable");
 
 # revive the peer
-$t->run_daemon(\&stream_daemon, port(8081));
-$t->run_daemon(\&stream_daemon, port(8082));
+$t->run_daemon(\&stream_daemon, $p1);
+$t->run_daemon(\&stream_daemon, $p2);
 
 select undef, undef, undef, 3;
 
-stream('127.0.0.1:' . port(8090))->io('.$');
-stream('127.0.0.1:' . port(8090))->io('.$');
+# to make sure the upstream is definitely revived,
+# we need to get OK response from each upstream server
+my $ok_responses = {$p1 => 0, $p2 => 0};
+for (1..3) {
+	my $port = stream('127.0.0.1:' . port(8090))->io('.$');
+	next unless defined $port && $port =~ /^\d+$/;
+
+	last if $ok_responses->{$p1} > 0 && $ok_responses->{$p2} > 0;
+
+	$ok_responses->{$port}++;
+}
+
+ok($ok_responses->{$p1} && $ok_responses->{$p2}, 'both backends revived')
+	or diag(explain($ok_responses));
 
 # expect peer to be in 'recovery' state due to slow start
 $r = get_json("/api/status/stream/upstreams/u1/peers/127.0.0.1:$p1");
