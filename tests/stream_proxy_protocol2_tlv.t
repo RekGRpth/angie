@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Roman Arutyunyan
 # (C) Eugene Grebenschikov
 # (C) Nginx, Inc.
@@ -25,7 +26,7 @@ select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
 my $t = Test::Nginx->new()
-	->has(qw/stream stream_return stream_map rewrite/)->plan(14)
+	->has(qw/stream stream_return stream_map/)->plan(14)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -105,7 +106,7 @@ like($r, qr/ssl-sig-alg:SHA1\x0d?$/m, 'SSL_SIG_ALG');
 like($r, qr/ssl-key-alg:RSA512\x0d?$/m, 'SSL_KEY_ALG');
 
 SKIP: {
-skip 'no PCRE', 1 unless $t->has_module('rewrite');
+skip 'no PCRE', 1 unless $t->has_module('http') && $t->has_module('rewrite');
 
 like($r, qr/ssl-binary:true/, 'SSL_BINARY');
 
