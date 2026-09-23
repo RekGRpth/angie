@@ -21,6 +21,26 @@ without native QUIC support.
 </para>
 </change>
 
+<change type="bugfix">
+<para lang="ru">
+если проксируемый сервер возвращал статус, указанный в директиве
+"proxy_next_upstream" (или аналогичной), в ответ на уже отправленный ему запрос
+с методом POST, LOCK или PATCH, а параметр "non_idempotent" в этой директиве
+указан не был, запрос зависал до срабатывания тайм-аута чтения и завершался с
+кодом 504 вместо фактического кода, полученного от проксируемого сервера;
+ошибка появилась в 1.11.0.
+</para>
+<para lang="en">
+if the proxied server returned a status specified in the "proxy_next_upstream"
+directive (or a similar directive) in response to a POST, LOCK, or PATCH request
+that had already been sent to it, and the "non_idempotent" parameter was not
+specified in that directive, the request would hang until the read timeout fired
+and finish with code 504 instead of the actual code returned by the proxied
+server;
+the bug had appeared in 1.11.0.
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 возможность задавать в директиве "acme_dns_ttl" значения времени,
@@ -114,6 +134,32 @@ the bug had appeared in 1.11.0.
 the "ssl" statistics of the "status_zone" directive in the HTTP module did
 not count timed out SSL handshakes for HTTP/3 connections.
 the bug had appeared in 1.8.0.
+</para>
+</change>
+
+</changes>
+
+
+<changes ver="1.12.2" date="2026-09-17">
+
+<change type="security">
+<para lang="ru">
+при использовании версии OpenSSL без встроенной поддержки HTTP/3 (3.5.0 или
+более ранней), если сервер по умолчанию для адреса, принявшего обычный
+HTTPS-запрос, также использовал HTTP/3 (директиву "listen ... quic", в том
+числе на другом порту), а по имени домена (SNI) выбирался блок "server" без
+HTTP/3, то могло происходить ограниченное повреждение памяти рабочего процесса
+или его падение (CVE-2026-90439);
+исправление портировано из nginx 1.31.6.
+</para>
+<para lang="en">
+when using an OpenSSL version without native HTTP/3 support (3.5.0 or earlier),
+if the default server for the address that accepted a regular HTTPS request
+also used HTTP/3 (the "listen ... quic" directive, possibly on a different
+port), while a "server" block without HTTP/3 was selected by domain name (SNI),
+limited worker process memory corruption or a worker process crash could occur
+(CVE-2026-90439);
+the fix was ported from nginx 1.31.6.
 </para>
 </change>
 
