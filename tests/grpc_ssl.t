@@ -101,12 +101,27 @@ http {
 
 EOF
 
-$t->write_file('openssl.conf', <<EOF);
+$t->write_file('openssl.localhost.conf', <<EOF);
 [ req ]
+prompt = no
+default_bits = 2048
+encrypt_key = no
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+[ req_distinguished_name ]
+commonName = localhost
+[ v3_req ]
+subjectAltName = DNS:localhost
+EOF
+
+$t->write_file('openssl.client.conf', <<EOF);
+[ req ]
+prompt = no
 default_bits = 2048
 encrypt_key = no
 distinguished_name = req_distinguished_name
 [ req_distinguished_name ]
+commonName = client
 EOF
 
 my $d = $t->testdir();
@@ -114,7 +129,7 @@ my $tr = `openssl genrsa -help 2>&1` =~ /-traditional/ ? '-traditional' : '';
 
 foreach my $name ('localhost') {
 	system('openssl req -x509 -new '
-		. "-config $d/openssl.conf -subj /CN=$name/ "
+		. "-config $d/openssl.$name.conf "
 		. "-out $d/$name.crt -keyout $d/$name.key "
 		. ">>$d/openssl.out 2>&1") == 0
 		or die "Can't create certificate for $name: $!\n";
@@ -125,7 +140,7 @@ foreach my $name ('client') {
 		. "-aes128 $tr 2048 >>$d/openssl.out 2>&1") == 0
 		or die "Can't create private key: $!\n";
 	system('openssl req -x509 -new '
-		. "-config $d/openssl.conf -subj /CN=$name/ "
+		. "-config $d/openssl.$name.conf "
 		. "-out $d/$name.crt "
 		. "-key $d/$name.key -passin pass:$name"
 		. ">>$d/openssl.out 2>&1") == 0
