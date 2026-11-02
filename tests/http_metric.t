@@ -1038,9 +1038,14 @@ my %test_cases = (
 		my @block1_data;
 
 		my $fails = 0;
+		my $n = 0;
 		do {
-			my $key = '';
-			$key .= sprintf("%x", rand 16) for (1 .. int(rand 200) + 2);
+			# keys must stay unique: a repeated key turns the set into a
+			# lookup hit, which bumps "count" to 2 and moves the node to
+			# the head of the LRU queue, so the fold of evicted nodes no
+			# longer matches the first inserted ones reconstructed below;
+			# the random key length is kept to cover slab straddling
+			my $key = sprintf("%0*x", int(rand 200) + 2, $n++);
 
 			my $v = int(rand 99999) - int(rand 99999);
 
