@@ -159,7 +159,14 @@ isnt(get(8082), 'OK', 'verify fail');
 
 # commonName
 
+TODO: {
+local $TODO = 'rejected by OpenSSL 4.1.0+'
+	if $t->has_feature('openssl:4.1.0');
+
 is(get(8083), 'OK', 'verify cn');
+
+}
+
 isnt(get(8084), 'OK', 'verify cn fail');
 
 # untrusted

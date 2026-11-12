@@ -157,7 +157,14 @@ like(http_get('/fail'), qr/502 Bad/ms, 'verify fail');
 
 # commonName
 
+TODO: {
+local $TODO = 'rejected by OpenSSL 4.1.0+'
+	if $t->has_feature('openssl:4.1.0');
+
 like(http_get('/cn'), qr/200 OK/ms, 'verify cn');
+
+}
+
 like(http_get('/cn/fail'), qr/502 Bad/ms, 'verify cn fail');
 
 # untrusted
