@@ -88,7 +88,17 @@ sub new {
 
 	# TODO: Remove this function and its dependents once pebble and
 	# challtestsrv have been updated in our testing infrastructure.
-	_check_server_version($self);
+	my $server_ok = _check_server_version($self);
+
+	# Note: this skips the whole file, so it must run before the test
+	# sets a plan that lets execution continue (tests => N, no_plan
+	# or $t->plan()); planning twice is fatal.  A preceding skip_all
+	# is harmless: it exits before we get here.
+
+	Test::More::plan(skip_all => 'missing or invalid server; use the '
+			. 'latest pebble and challtestsrv from '
+			. 'https://github.com/letsencrypt/pebble/releases')
+		unless $server_ok;
 
 	$self->{dns_port} //= port(8053);
 
@@ -100,15 +110,21 @@ sub new {
 # Detects the version of the pebble binary by inspecting its embedded
 # Go build info, then sets compatibility flags accordingly.
 #
+# Returns true if a usable pebble was found and its version determined,
+# false otherwise.
+#
 # For more detail on Go build info, see:
 #   https://pkg.go.dev/cmd/go#hdr-Print_Go_version
 #   https://go.dev/src/debug/buildinfo/buildinfo.go
 sub _check_server_version {
 	my ($self) = @_;
 
+	my $ok = 0;
+
 	# Initially assume we are using recent server versions.
 	my $outdated = 0;
 	$self->{_cts_dnsserv_opt} = '-dnsserver';
+	$self->{_eab_supported} = 1;
 	$self->{_profiles_supported} = 1;
 	$self->{_dns_over_tcp} = 1;
 
@@ -153,6 +169,19 @@ sub _check_server_version {
 		goto done;
 	}
 
+	$ok = 1;
+
+	# External account binding was broken by the go-jose/v4 upgrade in
+	# pebble, which rejected the MAC based algorithms EAB requires, and
+	# fixed in this commit:
+	# https://github.com/letsencrypt/pebble/commit/e87ace717523ab28477c613595bded77816e1e50
+	# Date: Wed May 1 12:52:03 2024 -0700 (1714593123 since Epoch).
+
+	if ($time < 1714593123) {
+		$self->{_eab_supported} = 0;
+		$outdated = 1;
+	}
+
 	# Support for profiles was added in pebble in this commit:
 	# https://github.com/letsencrypt/pebble/commit/e08dd94e723a0e8d005d7c6149a8666e4bf5d877
 	# Date: Thu Aug 22 08:57:20 2024 -0700 (1724342240 since Epoch).
@@ -188,6 +217,8 @@ sub _check_server_version {
 done:
 
 	note("Failed to obtain ACME server version: $err") if $err;
+
+	return $ok;
 }
 
 # _rfc3339_to_epoch($ts)

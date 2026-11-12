@@ -53,6 +53,9 @@ my $acme_helper = Test::Nginx::ACME->new({
 	t => $t, dns_port => $dns_port
 });
 
+plan(skip_all => 'external account binding is broken in this pebble version')
+	unless $acme_helper->{_eab_supported};
+
 my $d = $t->testdir();
 
 my $pebble_port = port(14000);

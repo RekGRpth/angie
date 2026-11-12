@@ -4,9 +4,6 @@
 
 # Test for the ACME module in the stream context.
 
-# This script requires pebble and pebble-challtestsrv
-# (see Test::Nginx::ACME for details)
-
 ###############################################################################
 
 use warnings;
