@@ -108,7 +108,7 @@ $t->run();
 
 ###############################################################################
 
-like(http_get('/'), qr/200/, "request ok");
+like(http_get('/'), qr/200 OK/, "request ok");
 is($t->read_file("ubody.log"), "sent_body=XX\n", "empty value in log");
 like(http_get('/ssi.html'), qr/XTESTsent_body=XX/, "empty value in SSI");
 

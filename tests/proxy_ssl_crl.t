@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -199,13 +200,13 @@ $t->run();
 
 ###############################################################################
 
-like(http_get('/1'), qr/200/, 'proxy crl - no revoked certs');
+like(http_get('/1'), qr/200 OK/, 'proxy crl - no revoked certs');
 like(http_get('/2'), qr/502 Bad/, 'proxy crl - client revoked');
 like(http_get('/3'), qr/502 Bad/, 'proxy crl - CA revoked');
 
 # intermediate CAs, incomplete chain
 
 like(http_get('/4'), qr/502 Bad/, 'proxy crl - incomplete chain');
-like(http_get('/5'), qr/200/, 'proxy crl - no revoked chain');
+like(http_get('/5'), qr/200 OK/, 'proxy crl - no revoked chain');
 
 ###############################################################################

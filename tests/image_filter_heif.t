@@ -381,7 +381,7 @@ sub format_supported {
 
 	my $r = http_get($file);
 
-	return !($r =~ qr/415/);
+	return !($r =~ qr/415 Unsupported/);
 }
 
 sub rosa13_broken_x265 {

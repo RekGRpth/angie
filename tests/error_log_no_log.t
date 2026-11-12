@@ -58,8 +58,8 @@ $t->run();
 # charge limit_req
 
 like(http_get('/'), qr/SEE/, '1st request');
-like(http_get('/'), qr/503/, '2nd request');
-like(http_get('/'), qr/503/, '3rd request');
+like(http_get('/'), qr/503 Service Unavailable/, '2nd request');
+like(http_get('/'), qr/503 Service Unavailable/, '3rd request');
 
 $t->stop();
 

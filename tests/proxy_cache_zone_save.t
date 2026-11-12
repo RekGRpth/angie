@@ -135,10 +135,10 @@ sub init_cache {
 
 	# fill the cache with some requests:
 
-	like(http_get('/a'), qr/200/, 'a response');
-	like(http_get('/b'), qr/200/, 'b response');
-	like(http_get('/c'), qr/200/, 'c response');
-	like(http_get('/d'), qr/200/, 'd response');
+	like(http_get('/a'), qr/200 OK/, 'a response');
+	like(http_get('/b'), qr/200 OK/, 'b response');
+	like(http_get('/c'), qr/200 OK/, 'c response');
+	like(http_get('/d'), qr/200 OK/, 'd response');
 
 	like(http_get('/a'), qr/X-STATUS: HIT/, 'a cached');
 	like(http_get('/b'), qr/X-STATUS: HIT/, 'b cached');
@@ -286,14 +286,14 @@ EOF
 
 	# we still can add entries
 
-	like(http_get('/bbb'), qr/200/, 'new response');
+	like(http_get('/bbb'), qr/200 OK/, 'new response');
 	like(http_get('/bbb'), qr/X-STATUS: HIT/, 'new response cached');
 
 	ok($t->reload(), 'reloaded');
 
 	like(http_get('/a'), qr/X-STATUS: HIT/, 'existing a cache');
 
-	like(http_get('/ffff'), qr/200/, 'f response');
+	like(http_get('/ffff'), qr/200 OK/, 'f response');
 	like(http_get('/ffff'), qr/X-STATUS: HIT/, 'f cached');
 
 	$t->stop();

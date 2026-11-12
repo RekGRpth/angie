@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Maxim Dounin
 
 # Tests for rewrite module.
@@ -239,6 +240,6 @@ like(http_get('/capturedup/%25?a=b'),
 
 # break
 
-like(http_get('/break'), qr/200/, 'valid_location reset');
+like(http_get('/break'), qr/200 OK/, 'valid_location reset');
 
 ###############################################################################

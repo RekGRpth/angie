@@ -79,13 +79,13 @@ $t->run()->plan(2);
 
 ###############################################################################
 
-like(http_get('/on'), qr/502/, 'Connection drop on');
+like(http_get('/on'), qr/502 Bad/, 'Connection drop on');
 
 $t->restart_resolver(5858, $addrs);
 
 wait_peer('127.0.0.1') or diag("$0: Peer is not ready");
 
-like(http_get('/off'), qr/200/, 'Connection drop off');
+like(http_get('/off'), qr/200 OK/, 'Connection drop off');
 
 $t->stop_resolver();
 

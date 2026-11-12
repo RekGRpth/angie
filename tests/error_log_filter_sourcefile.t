@@ -106,7 +106,7 @@ EOF
 $t->run();
 
 like(http_get('/'), qr/PROXIED/, 'visited upstream');
-like(http_get('/bad'), qr/500/, 'triggered bad upstream');
+like(http_get('/bad'), qr/500 Internal/, 'triggered bad upstream');
 
 $t->stop();
 
