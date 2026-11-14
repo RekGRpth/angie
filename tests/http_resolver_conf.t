@@ -132,7 +132,7 @@ like(http_get('/both', host => '2-test.com'), qr/200 OK/,
 	'2nd /both resolver 127.0.1.2');
 like(http_get('/both', host => '3-test.com'), qr/200 OK/,
 	'2nd /both resolver 127.0.1.3');
-like(http_get('/both', host => '4-test.com'), qr/502/,
+like(http_get('/both', host => '4-test.com'), qr/502 Bad/,
 	'2nd /both no resolver 127.0.1.4');
 
 sleep 2;
@@ -140,7 +140,7 @@ sleep 2;
 like(http_get('/both', host => '2-test.com'), qr/200 OK/,
 	'3d /both resolver 127.0.1.2');
 
-like(http_get('/conf', host => '4-test.com'), qr/502/,
+like(http_get('/conf', host => '4-test.com'), qr/502 Bad/,
 	'2nd /conf no resolver 127.0.1.4');
 like(http_get('/conf', host => '5-test.com'), qr/200 OK/,
 	'2nd /conf resolver 127.0.1.5');

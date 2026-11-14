@@ -132,11 +132,12 @@ like(http_get('/conditional'), qr/200 OK.*\bdirect\b/ms,
 like(http_get('/uri'), qr!uri=/uri!ms, 'uri unchanged after goto');
 
 # redirect cycle must be detected and result in 500
-like(http_get('/cycle'), qr/500/, 'cycle detection');
+like(http_get('/cycle'), qr/500 Internal/, 'cycle detection');
 
 like(http_get('/chain'), qr/200 OK.*\bchained\b/ms, 'named location chaining');
 
-like(http_get('/notfound'), qr/500/, 'goto nonexistent named location');
+like(http_get('/notfound'), qr/500 Internal/,
+	'goto nonexistent named location');
 
 my $r = http_get('/dead-code');
 like($r, qr/200 OK.*\bnamed\b/ms, 'return after goto is dead code');

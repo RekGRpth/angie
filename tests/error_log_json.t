@@ -132,24 +132,26 @@ subtest 'prepare' => sub {
 	http_get('/order');
 
 	# errno
-	like(http_get('/errno/404?tag1=bar'), qr/404/, '404 from missing file');
+	like(http_get('/errno/404?tag1=bar'), qr/404 Not Found/,
+		'404 from missing file');
 
 	# tag_escape
-	like(http_get('/tesc/?tag=},broken"'), qr/503/, '503 from tesc');
+	like(http_get('/tesc/?tag=},broken"'), qr/503 Service Unavailable/,
+		'503 from tesc');
 
 	# truncation
 
 	my $MAX_GOOD = 1670;
 	my $long_file = 'x' x $MAX_GOOD;
 
-	like(http_get("/trunc/$long_file?tag=3210"), qr/503/,
+	like(http_get("/trunc/$long_file?tag=3210"), qr/503 Service Unavailable/,
 		"503 at len:$MAX_GOOD");
 
 	for my $len (($MAX_GOOD + 1) .. ($MAX_GOOD + 100)) {
 		$long_file = 'x' x $len;
 
-		like(http_get("/trunc/$long_file?tag=3210"), qr/503/,
-			"503 from /trunc len:$len");
+		like(http_get("/trunc/$long_file?tag=3210"),
+			qr/503 Service Unavailable/, "503 from /trunc len:$len");
 	}
 };
 

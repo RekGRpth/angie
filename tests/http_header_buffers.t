@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Maxim Dounin
 # (C) Nginx, Inc.
 
@@ -102,7 +103,7 @@ like(http(
 	"X-Foo: " . ("1234567890" x 20) . CRLF .
 	"X-Foo: " . ("1234567890" x 20) . CRLF .
 	CRLF
-), qr/204|400/, 'additional buffers in virtual server');
+), qr/204 No Content|400 Bad Request/, 'additional buffers in virtual server');
 
 # for pipelined requests large header buffers are saved to hc->free;
 # it sized for number of buffers in the current virtual server, but
@@ -122,7 +123,7 @@ like(http(
 	"Host: one" . CRLF .
 	"Connection: close" . CRLF .
 	CRLF
-), qr/204/, 'pipelined with too many buffers');
+), qr/204 No Content/, 'pipelined with too many buffers');
 
 }
 

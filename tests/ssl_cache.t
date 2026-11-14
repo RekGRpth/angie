@@ -99,13 +99,16 @@ EOF
 
 my $d = $t->testdir();
 
-$t->write_file('openssl.conf', <<EOF);
+$t->write_file('openssl.conf', <<'EOF');
 [ req ]
 default_bits = 2048
 encrypt_key = no
 distinguished_name = req_distinguished_name
+req_extensions = req_ext
 x509_extensions = myca_extensions
 [ req_distinguished_name ]
+[ req_ext ]
+subjectAltName = ${ENV::SAN}
 [ myca_extensions ]
 basicConstraints = critical,CA:TRUE
 EOF
@@ -121,12 +124,14 @@ default_md = sha256
 policy = myca_policy
 serial = $d/certserial
 default_days = 1
+copy_extensions = copy
 
 [ myca_policy ]
 commonName = supplied
 EOF
 
 foreach my $name ('root') {
+	$ENV{SAN} = "DNS:$name";
 	system('openssl req -x509 -new '
 		. "-config $d/openssl.conf -subj /CN=$name/ "
 		. "-out $d/$name.crt -keyout $d/$name.key "
@@ -138,6 +143,7 @@ $t->write_file('certserial', '1000');
 $t->write_file('certindex', '');
 
 foreach my $name ('1.example.com', '2.example.com') {
+	$ENV{SAN} = "DNS:$name";
 	system('openssl req -new '
 		. "-config $d/openssl.conf -subj /CN=$name/ "
 		. "-out $d/$name.csr -keyout $d/$name.key "

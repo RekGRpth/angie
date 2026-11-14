@@ -65,9 +65,11 @@ EOF
 
 $t->run();
 
-like(http_get('/notags'), qr/404/, 'query without user tags');
-like(http_get('/fb?tag1=bar&tag2=foo'), qr/404/, 'query with foo/bar');
-like(http_get('/hw?tag1=hello&tag2=world'), qr/404/, 'query with hello/world');
+like(http_get('/notags'), qr/404 Not Found/, 'query without user tags');
+like(http_get('/fb?tag1=bar&tag2=foo'), qr/404 Not Found/,
+	'query with foo/bar');
+like(http_get('/hw?tag1=hello&tag2=world'), qr/404 Not Found/,
+	'query with hello/world');
 
 $t->stop();
 

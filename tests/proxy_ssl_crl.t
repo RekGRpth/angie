@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -11,6 +12,7 @@ use warnings;
 use strict;
 
 use Test::More;
+use Test::Deep qw/cmp_deeply re/;
 
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
@@ -23,7 +25,7 @@ select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
 my $t = Test::Nginx->new()->has(qw/http http_ssl proxy/)
-	->has_daemon('openssl')->plan(5);
+	->has_daemon('openssl')->plan(6);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -102,7 +104,7 @@ EOF
 
 my $d = $t->testdir();
 
-$t->write_file('openssl.conf', <<EOF);
+$t->write_file('openssl.conf', <<'EOF');
 [ req ]
 default_bits = 2048
 encrypt_key = no
@@ -132,6 +134,7 @@ commonName = supplied
 [ myca_extensions ]
 basicConstraints = critical,CA:TRUE
 keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+subjectAltName = \${ENV::SAN}
 EOF
 
 foreach my $name ('root') {
@@ -153,12 +156,14 @@ foreach my $name ('int', 'end') {
 $t->write_file('certserial', '1000');
 $t->write_file('certindex', '');
 
+$ENV{SAN} = "DNS:int";
 system("openssl ca -batch -config $d/ca.conf "
 	. "-keyfile $d/root.key -cert $d/root.crt "
 	. "-subj /CN=int/ -in $d/int.csr -out $d/int.crt "
 	. ">>$d/openssl.out 2>&1") == 0
 	or die "Can't sign certificate for int: $!\n";
 
+$ENV{SAN} = "DNS:end";
 system("openssl ca -batch -config $d/ca.conf "
 	. "-keyfile $d/int.key -cert $d/int.crt "
 	. "-subj /CN=end/ -in $d/end.csr -out $d/end.crt "
@@ -199,13 +204,28 @@ $t->run();
 
 ###############################################################################
 
-like(http_get('/1'), qr/200/, 'proxy crl - no revoked certs');
+like(http_get('/1'), qr/200 OK/, 'proxy crl - no revoked certs');
 like(http_get('/2'), qr/502 Bad/, 'proxy crl - client revoked');
 like(http_get('/3'), qr/502 Bad/, 'proxy crl - CA revoked');
 
 # intermediate CAs, incomplete chain
 
 like(http_get('/4'), qr/502 Bad/, 'proxy crl - incomplete chain');
-like(http_get('/5'), qr/200/, 'proxy crl - no revoked chain');
+like(http_get('/5'), qr/200 OK/, 'proxy crl - no revoked chain');
+
+$t->stop();
+
+# errors
+my @errors = $t->find_in_file('error.log',
+	'upstream SSL certificate verify error:');
+
+my $prefix = 'while SSL handshaking to upstream, client: "127.0.0.1", '
+	. 'server: "localhost", request_line:';
+my @expected_errors = (
+	re(qr|\(23:certificate revoked\) $prefix "GET /2 HTTP/1\.0"|),
+	re(qr|\(23:certificate revoked\) $prefix "GET /3 HTTP/1\.0"|),
+	re(qr|\(3:unable to get certificate CRL\) $prefix "GET /4 HTTP/1\.0"|),
+);
+cmp_deeply(\@errors, \@expected_errors, 'expected SSL errors');
 
 ###############################################################################

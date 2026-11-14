@@ -80,12 +80,13 @@ EOF
 
 $t->run();
 
-like(http_sp_xff('/foo', '127.0.0.1'), qr/404/, 'generic client query');
-like(http_sp_xff('/f1', '127.0.0.2'), qr/404/, 'query client f1');
-like(http_sp_xff('/f2', '127.0.0.3'), qr/404/, 'query client f2');
-like(http_sp_xff('/f2', '127.0.0.4'), qr/404/, 'query client f3');
+like(http_sp_xff('/foo', '127.0.0.1'), qr/404 Not Found/,
+	'generic client query');
+like(http_sp_xff('/f1', '127.0.0.2'), qr/404 Not Found/, 'query client f1');
+like(http_sp_xff('/f2', '127.0.0.3'), qr/404 Not Found/, 'query client f2');
+like(http_sp_xff('/f2', '127.0.0.4'), qr/404 Not Found/, 'query client f3');
 
-like(http_get('/bad'), qr/500/, 'triggered exact error');
+like(http_get('/bad'), qr/500 Internal/, 'triggered exact error');
 
 $t->stop();
 

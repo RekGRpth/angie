@@ -77,13 +77,16 @@ EOF
 
 $t->run();
 
-like(http_get('/foo'), qr/404/, 'generic query');
-like(http_get('/f1'), qr/404/, 'query f1');
-like(http_get('/f2'), qr/404/, 'query f2');
+like(http_get('/foo'), qr/404 Not Found/, 'generic query');
+like(http_get('/f1'), qr/404 Not Found/, 'query f1');
+like(http_get('/f2'), qr/404 Not Found/, 'query f2');
 
-like(http_sp_xff('/client/foo', '192.168.1.1'), qr/404/, 'generic client query');
-like(http_sp_xff('/client/f1', '192.168.33.33'), qr/404/, 'query client f1');
-like(http_sp_xff('/client/f2', '192.168.44.44'), qr/404/, 'query client f2');
+like(http_sp_xff('/client/foo', '192.168.1.1'), qr/404 Not Found/,
+	'generic client query');
+like(http_sp_xff('/client/f1', '192.168.33.33'), qr/404 Not Found/,
+	'query client f1');
+like(http_sp_xff('/client/f2', '192.168.44.44'), qr/404 Not Found/,
+	'query client f2');
 
 $t->stop();
 

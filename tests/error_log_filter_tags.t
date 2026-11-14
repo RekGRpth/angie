@@ -87,7 +87,7 @@ EOF
 $t->run();
 
 like(http_get('/'), qr/PROXIED/, 'visited upstream');
-like(http_get('/bad_file.txt'), qr/404/, 'triggered missing file');
+like(http_get('/bad_file.txt'), qr/404 Not Found/, 'triggered missing file');
 
 $t->stop();
 

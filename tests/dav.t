@@ -181,7 +181,7 @@ Content-Length: 10
 
 EOF
 
-like($r, qr/415/, 'move body');
+like($r, qr/415 Unsupported/, 'move body');
 
 $r = http(<<EOF . '0123456789');
 DELETE /file HTTP/1.1
@@ -225,7 +225,7 @@ Transfer-Encoding: chunked
 
 EOF
 
-like($r, qr/415/, 'move body chunked');
+like($r, qr/415 Unsupported/, 'move body chunked');
 
 $r = http(<<EOF . $chunked);
 DELETE /file HTTP/1.1
@@ -240,10 +240,10 @@ like($r, qr/415 Unsupported/, 'delete body chunked');
 # PUT edge cases
 
 $r = http_put('/trailing/', '0123456789');
-like($r, qr/409/, 'put to collection uri');
+like($r, qr/409 Conflict/, 'put to collection uri');
 
 $r = http_put('/range_file', '0123456789', 'Content-Range: bytes 0-9/20');
-like($r, qr/501/, 'put with content-range');
+like($r, qr/501 Not Implemented/, 'put with content-range');
 
 $r = http_put('/dated_file', 'dated', 'Date: Thu, 01 Jan 2026 00:00:00 GMT');
 like($r, qr/201 Created/, 'put with valid date header');
@@ -254,7 +254,7 @@ like($r, qr/201 Created/, 'put with invalid date header');
 mkdir($t->testdir() . '/existdir');
 
 $r = http_put('/existdir', 'data');
-like($r, qr/409/, 'put over existing directory');
+like($r, qr/409 Conflict/, 'put over existing directory');
 
 $r = http_put('/full/a/b/c/deep_file', 'deep');
 like($r, qr/201 Created/, 'put create full path');
@@ -272,13 +272,13 @@ like($r, qr/201 Created/, 'put zero-length new file');
 # DELETE edge cases
 
 $r = http_delete('/nonexistent', 'Content-Length: 0');
-like($r, qr/404/, 'delete non-existent');
+like($r, qr/404 Not Found/, 'delete non-existent');
 
 mkdir($t->testdir() . '/deldir_noslash');
 $t->write_file('deldir_noslash/f', 'x');
 
 $r = http_delete('/deldir_noslash', 'Content-Length: 0');
-like($r, qr/409/, 'delete dir without trailing slash');
+like($r, qr/409 Conflict/, 'delete dir without trailing slash');
 
 mkdir($t->testdir() . '/deldir');
 $t->write_file('deldir/f1', 'x');
@@ -302,15 +302,15 @@ mkdir($t->testdir() . '/depthdir');
 $t->write_file('depthdir/f', 'x');
 
 $r = http_delete('/depthdir/', 'Depth: 0');
-like($r, qr/400/, 'delete dir depth 0');
+like($r, qr/400 Bad Request/, 'delete dir depth 0');
 
 $r = http_delete('/depthdir/', 'Depth: 1');
-like($r, qr/400/, 'delete dir depth 1');
+like($r, qr/400 Bad Request/, 'delete dir depth 1');
 
 $t->write_file('depthfile', 'x');
 
 $r = http_delete('/depthfile', 'Depth: 1');
-like($r, qr/400/, 'delete file depth 1');
+like($r, qr/400 Bad Request/, 'delete file depth 1');
 
 $t->write_file('depthfile0', 'x');
 
@@ -325,12 +325,12 @@ like($r, qr/204 No Content/, 'delete file depth infinity');
 $t->write_file('baddepth', 'x');
 
 $r = http_delete('/baddepth', 'Depth: bogus');
-like($r, qr/400/, 'delete invalid depth header');
+like($r, qr/400 Bad Request/, 'delete invalid depth header');
 
 $t->write_file('depth2', 'x');
 
 $r = http_delete('/depth2', 'Depth: 2');
-like($r, qr/400/, 'delete depth 2 invalid');
+like($r, qr/400 Bad Request/, 'delete depth 2 invalid');
 
 # min_delete_depth
 
@@ -338,7 +338,7 @@ mkdir($t->testdir() . '/min3');
 $t->write_file('min3/shallow', 'x');
 
 $r = http_delete('/min3/shallow');
-like($r, qr/409/, 'min_delete_depth too shallow');
+like($r, qr/409 Conflict/, 'min_delete_depth too shallow');
 
 mkdir($t->testdir() . '/min3/a');
 mkdir($t->testdir() . '/min3/a/b');
@@ -356,14 +356,14 @@ like($r, qr/204 No Content/, 'min_delete_depth 0');
 # MKCOL edge cases
 
 $r = http_mkcol('/no_slash');
-like($r, qr/409/, 'mkcol without trailing slash');
+like($r, qr/409 Conflict/, 'mkcol without trailing slash');
 
 http_mkcol('/newcol/');
 $r = http_mkcol('/newcol/');
-like($r, qr/405/, 'mkcol existing directory');
+like($r, qr/405 Method Not Allowed/, 'mkcol existing directory');
 
 $r = http_mkcol('/nonexist_parent/child/');
-like($r, qr/409/, 'mkcol missing parent');
+like($r, qr/409 Conflict/, 'mkcol missing parent');
 
 # Destination header validation
 
@@ -376,22 +376,22 @@ Connection: close
 
 EOF
 
-like($r, qr/400/, 'copy no destination');
+like($r, qr/400 Bad Request/, 'copy no destination');
 
 $r = http_copy('/src_file', 'ftp://localhost/bad_scheme');
-like($r, qr/400/, 'copy invalid destination scheme');
+like($r, qr/400 Bad Request/, 'copy invalid destination scheme');
 
 $r = http_copy('/src_file', 'http://otherhost/file');
-like($r, qr/400/, 'copy different host');
+like($r, qr/400 Bad Request/, 'copy different host');
 
 $r = http_copy('/src_file', 'http://localhost/full_url_copy');
-like($r, qr/20[14]/, 'copy with full url destination');
+like($r, qr/201 Created|204 No Content/, 'copy with full url destination');
 
 $r = http_copy('/src_file', 'http://localhost:8080/port_copy');
-like($r, qr/20[14]/, 'copy with port in destination');
+like($r, qr/201 Created|204 No Content/, 'copy with port in destination');
 
 $r = http_copy('/src_file', 'http://localhost');
-like($r, qr/400/, 'copy destination no path after host');
+like($r, qr/400 Bad Request/, 'copy destination no path after host');
 
 $r = http(<<EOF);
 MOVE /src_file HTTP/1.1
@@ -400,7 +400,7 @@ Connection: close
 
 EOF
 
-like($r, qr/400/, 'move no destination');
+like($r, qr/400 Bad Request/, 'move no destination');
 
 # Overwrite header
 
@@ -408,13 +408,13 @@ $t->write_file('src_ow', 'OWDATA');
 $t->write_file('existing_dst', 'OLD');
 
 $r = http_copy('/src_ow', '/existing_dst', 'Overwrite: F');
-like($r, qr/412/, 'copy overwrite false');
+like($r, qr/412 Precondition Failed/, 'copy overwrite false');
 is($t->read_file('existing_dst'), 'OLD', 'copy overwrite false preserved');
 
 $t->write_file('existing_dst2', 'OLD2');
 
 $r = http_copy('/src_ow', '/existing_dst2', 'Overwrite: f');
-like($r, qr/412/, 'copy overwrite lowercase f');
+like($r, qr/412 Precondition Failed/, 'copy overwrite lowercase f');
 
 $r = http_copy('/src_ow', '/existing_dst', 'Overwrite: T');
 like($r, qr/204 No Content/, 'copy overwrite true');
@@ -426,10 +426,10 @@ $r = http_copy('/src_ow', '/ow_lower', 'Overwrite: t');
 like($r, qr/204 No Content/, 'copy overwrite lowercase t');
 
 $r = http_copy('/src_ow', '/inv_ow_dst', 'Overwrite: X');
-like($r, qr/400/, 'copy invalid overwrite');
+like($r, qr/400 Bad Request/, 'copy invalid overwrite');
 
 $r = http_copy('/src_ow', '/inv_ow_dst2', 'Overwrite: TRUE');
-like($r, qr/400/, 'copy invalid overwrite multi-char');
+like($r, qr/400 Bad Request/, 'copy invalid overwrite multi-char');
 
 # COPY Depth header
 
@@ -437,7 +437,7 @@ $r = http_copy('/src_ow', '/depth0_copy', 'Depth: 0');
 like($r, qr/204 No Content/, 'copy file depth 0');
 
 $r = http_copy('/src_ow', '/depth1_copy', 'Depth: 1');
-like($r, qr/400/, 'copy depth 1 invalid');
+like($r, qr/400 Bad Request/, 'copy depth 1 invalid');
 
 # collection/non-collection mismatch
 
@@ -445,10 +445,10 @@ mkdir($t->testdir() . '/srcdir_mm');
 $t->write_file('srcdir_mm/inner', 'INNER');
 
 $r = http_copy('/srcdir_mm/', '/mismatch_noncol');
-like($r, qr/409/, 'copy collection to non-collection');
+like($r, qr/409 Conflict/, 'copy collection to non-collection');
 
 $r = http_copy('/src_ow', '/mismatch_col/');
-like($r, qr/409/, 'copy non-collection to collection');
+like($r, qr/409 Conflict/, 'copy non-collection to collection');
 
 # directory tree operations
 
@@ -472,12 +472,12 @@ like($r, qr/201 Created/, 'copy dir overwrite existing');
 is($t->read_file('ow_dst/data'), 'NEWDATA', 'copy dir overwrite content');
 
 $r = http_copy('/nonexistent_src', '/some_dst');
-like($r, qr/404/, 'copy source not found');
+like($r, qr/404 Not Found/, 'copy source not found');
 
 mkdir($t->testdir() . '/existing_dir_dst');
 
 $r = http_copy('/src_ow', 'http://localhost/existing_dir_dst');
-like($r, qr/409/, 'copy to existing dir no slash');
+like($r, qr/409 Conflict/, 'copy to existing dir no slash');
 
 # MOVE
 
@@ -491,7 +491,7 @@ is($t->read_file('moved'), 'MOVEDATA', 'move file content');
 $t->write_file('movedepth', 'x');
 
 $r = http_move('/movedepth', '/movedepth_dst', 'Depth: 0');
-like($r, qr/400/, 'move depth 0 invalid');
+like($r, qr/400 Bad Request/, 'move depth 0 invalid');
 
 mkdir($t->testdir() . '/movedir_nested');
 mkdir($t->testdir() . '/movedir_nested/sub');
