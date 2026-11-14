@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -22,7 +23,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http realip stream/);
+my $t = Test::Nginx->new()->has(qw/http realip stream inet6/)
+	->plan(3);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -66,7 +68,7 @@ stream {
 EOF
 
 $t->write_file('t', 'SEE-THIS');
-$t->try_run('no inet6 support')->plan(3);
+$t->run();
 
 ###############################################################################
 

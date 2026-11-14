@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -25,8 +26,9 @@ select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
 my $t = Test::Nginx->new()->has(qw/stream stream_return stream_realip/)
-	->has(qw/stream_ssl socket_ssl/)
+	->has(qw/stream_ssl socket_ssl inet6/)
 	->has_daemon('openssl')
+	->plan(6)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -98,7 +100,7 @@ foreach my $name ('localhost') {
 		or die "Can't create certificate for $name: $!\n";
 }
 
-$t->try_run('no inet6 support')->plan(6);
+$t->run();
 
 ###############################################################################
 

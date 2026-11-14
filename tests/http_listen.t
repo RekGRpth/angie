@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -22,7 +23,7 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy rewrite/);
+my $t = Test::Nginx->new()->has(qw/http proxy rewrite inet6/);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -71,7 +72,7 @@ my $p2 = port(8182);
 plan(skip_all => 'no requested ranges')
 	if "$p2$p3" ne "81828183";
 
-$t->try_run('no inet6 support')->plan(9);
+$t->plan(9)->run();
 
 ###############################################################################
 

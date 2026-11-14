@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Andrey Zelenkov
 # (C) Nginx, Inc.
 
@@ -23,7 +24,9 @@ use Test::Nginx::Stream qw/ stream /;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/stream stream_return stream_map stream_geo/)
+my $t = Test::Nginx->new()
+	->has(qw/stream stream_return stream_map stream_geo inet6/)
+	->plan(6)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -88,7 +91,7 @@ stream {
 
 EOF
 
-$t->try_run('no inet6 support')->plan(6);
+$t->run();
 
 ###############################################################################
 

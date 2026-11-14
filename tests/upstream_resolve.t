@@ -26,7 +26,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy upstream_zone/);
+my $t = Test::Nginx->new()->has(qw/http proxy upstream_zone inet6/)
+	->plan(18);
 
 $t->skip_errors_check('crit',
 	qr/connect\(\) to \[fe80::1\]:\d{4,} failed/,
@@ -87,7 +88,7 @@ $t->write_file('t', '');
 
 $t->run_daemon(\&dns_daemon, $t);
 $t->waitforfile($t->testdir . '/' . port(8982));
-$t->try_run('no resolve in upstream server')->plan(18);
+$t->run();
 
 ###############################################################################
 

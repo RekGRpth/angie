@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Andrey Zelenkov
 # (C) Nginx, Inc.
 
@@ -26,7 +27,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http userid map unix/);
+my $t = Test::Nginx->new()->has(qw/http userid map unix inet6/)
+	->plan(35);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -147,7 +149,7 @@ $t->write_file('service', '');
 $t->write_file('cv1', '');
 $t->write_file('clog', '');
 $t->write_file('coff', '');
-$t->try_run('no inet6 support')->plan(35);
+$t->run();
 
 ###############################################################################
 

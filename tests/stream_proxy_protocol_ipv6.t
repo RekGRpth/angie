@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Andrey Zelenkov
 # (C) Nginx, Inc.
 
@@ -26,7 +27,8 @@ use Test::Nginx::Stream qw/ stream /;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/stream/)
+my $t = Test::Nginx->new()->has(qw/stream inet6/)
+	->plan(2)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -64,7 +66,7 @@ stream {
 EOF
 
 $t->run_daemon(\&stream_daemon);
-$t->try_run('no inet6 support')->plan(2);
+$t->run();
 $t->waitforsocket('127.0.0.1:' . port(8082));
 
 ###############################################################################

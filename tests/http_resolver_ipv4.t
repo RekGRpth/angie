@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Eugene Grebenschikov
 # (C) Nginx, Inc.
@@ -23,7 +24,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy/);
+my $t = Test::Nginx->new()->has(qw/http proxy inet6/)
+	->plan(3);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -73,7 +75,7 @@ http {
 
 EOF
 
-$t->try_run('no inet6 support')->plan(3);
+$t->run();
 
 $t->run_daemon(\&dns_daemon, port(8980), $t);
 $t->waitforfile($t->testdir . '/' . port(8980));

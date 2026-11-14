@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Nginx, Inc.
 
 # Tests for debug_connection.
@@ -21,7 +22,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http debug proxy/);
+my $t = Test::Nginx->new()->has(qw/http debug proxy inet6/)
+	->plan(5);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -52,7 +54,7 @@ http {
 
 EOF
 
-$t->try_run('no inet6 support')->plan(5);
+$t->run();
 
 ###############################################################################
 

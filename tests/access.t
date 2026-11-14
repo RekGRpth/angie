@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 
 # Tests for nginx access module.
@@ -23,7 +24,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy access unix/);
+my $t = Test::Nginx->new()->has(qw/http proxy access unix inet6/)
+	->plan(12);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -80,7 +82,7 @@ http {
 
 EOF
 
-$t->try_run('no inet6 support')->plan(12);
+$t->run();
 
 ###############################################################################
 

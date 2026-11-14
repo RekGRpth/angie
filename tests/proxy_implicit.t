@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -27,7 +28,7 @@ select STDOUT; $| = 1;
 eval { die if $Socket::VERSION < 1.96; };
 plan(skip_all => 'Socket too old for getaddrinfo') if $@;
 
-my $t = Test::Nginx->new()->has(qw/http proxy/);
+my $t = Test::Nginx->new()->has(qw/http proxy inet6/);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -64,7 +65,7 @@ http {
 
 EOF
 
-$t->try_run('no inet6 support');
+$t->run();
 
 my @addrs = resolve('localhost');
 

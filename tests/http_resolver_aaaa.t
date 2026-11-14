@@ -23,7 +23,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy rewrite/)
+my $t = Test::Nginx->new()->has(qw/http proxy rewrite inet6/)
+	->plan(72)
 	->skip_errors_check('crit', 'Invalid argument');
 
 $t->skip_errors_check('crit', "Can't assign requested address")
@@ -72,7 +73,7 @@ http {
 
 EOF
 
-$t->try_run('no inet6 support')->plan(72);
+$t->run();
 
 $t->run_daemon(\&dns_daemon, port(8981), $t);
 $t->run_daemon(\&dns_daemon, port(8982), $t);

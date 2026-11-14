@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Maxim Dounin
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
@@ -25,7 +26,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy upstream_ip_hash realip unix/)
+my $t = Test::Nginx->new()
+	->has(qw/http proxy upstream_ip_hash realip unix inet6/)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -95,7 +97,7 @@ http {
 
 EOF
 
-$t->try_run('no inet6 support');
+$t->run();
 
 plan(skip_all => 'no 127.0.0.1 on host')
 	if http_get('/') !~ /X-IP: 127.0.0.1/m;

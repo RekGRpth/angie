@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Andrey Zelenkov
 # (C) Nginx, Inc.
 
@@ -22,7 +23,8 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http geo proxy/)
+my $t = Test::Nginx->new()->has(qw/http geo proxy inet6/)
+	->plan(4)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -80,23 +82,13 @@ http {
             add_header X-XFF  $geo_proxy;
             add_header X-Arg  $geo_arg;
         }
-
-        location /addr {
-            add_header X-IP   $remote_addr;
-        }
     }
 }
 
 EOF
 
 $t->write_file('index.html', '');
-$t->write_file('addr', '');
-$t->try_run('no inet6 support');
-
-plan(skip_all => 'no ::1 on host')
-	if http_get('/addr') !~ /X-IP: ::1/m;
-
-$t->plan(4);
+$t->run();
 
 ###############################################################################
 

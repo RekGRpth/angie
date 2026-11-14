@@ -293,6 +293,9 @@ $t->waitforsocket("127.0.0.1:" . port(8081));
 $t->waitforsocket("127.0.0.1:" . port(8082));
 $t->waitforsocket("127.0.0.1:" . port(8083));
 
+$t->skip_errors_check('crit', qr/connect\(\) to \[::1\]:\d{4,} failed/)
+	unless $t->has_feature('inet6');
+
 ###############################################################################
 
 my $tls13 = test_tls13();

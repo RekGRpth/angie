@@ -422,6 +422,21 @@ sub has_feature($) {
 		return 1;
 	}
 
+	if ($feature eq 'inet6') {
+		eval { require IO::Socket::IP; };
+		return 0 if $@;
+
+		my $s = IO::Socket::IP->new(
+			LocalAddr => '::1',
+			GetAddrInfoFlags => Socket::AI_NUMERICHOST(),
+			Listen => 1
+		);
+		return 0 unless $s;
+
+		$s->close;
+		return 1;
+	}
+
 	$self->{_build_env} = `$NGINX --build-env 2>&1`
 		if !defined $self->{_build_env};
 
@@ -444,6 +459,33 @@ sub has_daemon($) {
 	return $self;
 }
 
+sub match_skip_message {
+	my ($self, $log_file, @messages) = @_;
+
+	return
+		unless -e $self->{_testdir} . '/' . $log_file;
+
+	my $log = $self->read_file($log_file);
+
+	foreach my $message (@messages) {
+		my ($label, $pattern);
+
+		if (ref $message eq 'ARRAY') {
+			($label, $pattern) = @{ $message };
+		} else {
+			($label, $pattern) = ($message, $message);
+		}
+
+		$pattern = quotemeta($pattern) unless ref $pattern;
+
+		if ($log =~ $pattern) {
+			return $label;
+		}
+	}
+
+	return;
+}
+
 sub try_run {
 	my ($self, @messages) = @_;
 
@@ -455,34 +497,30 @@ sub try_run {
 
 	$self->{_skip_stderr_check} = 1;
 
-	if ($ENV{TEST_ANGIE_VERBOSE}) {
+	if ($ENV{TEST_ANGIE_VERBOSE} && -e $self->{_testdir} . '/error.log') {
 		open F, '<', $self->{_testdir} . '/error.log'
 			or die "Can't open error.log: $!";
 		log_core($_) while (<F>);
 		close F;
 	}
 
-	my $error_log = $self->read_file('error.log');
-	foreach my $message (@messages) {
-		if ($error_log =~ quotemeta($message)) {
-			Test::More::plan(skip_all => $message);
-			return $self;
-		}
+	my $skip = $self->match_skip_message('error.log', @messages);
+	if ($skip) {
+		Test::More::plan(skip_all => $skip);
+		return $self;
 	}
 
-	my $stderr = $self->read_file('stderr');
-	foreach my $message (@messages) {
-		if ($stderr =~ quotemeta($message)) {
-			Test::More::plan(skip_all => $message);
-			return $self;
-		}
+	$skip = $self->match_skip_message('stderr', @messages);
+	if ($skip) {
+		Test::More::plan(skip_all => $skip);
+		return $self;
 	}
 
 	die $@;
 }
 
-sub retry_run($$) {
-	my ($self, $attempts) = @_;
+sub retry_run {
+	my ($self, $attempts, @messages) = @_;
 
 	for my $k (1 .. $attempts) {
 		eval {
@@ -492,6 +530,18 @@ sub retry_run($$) {
 		unless ($@) {
 			$self->{_skip_stderr_check} = 1;
 			undef $self->{_setup_failed};
+			return $self;
+		}
+
+		my $skip = $self->match_skip_message('error.log', @messages);
+		if ($skip) {
+			Test::More::plan(skip_all => $skip);
+			return $self;
+		}
+
+		$skip = $self->match_skip_message('stderr', @messages);
+		if ($skip) {
+			Test::More::plan(skip_all => $skip);
 			return $self;
 		}
 
@@ -589,8 +639,18 @@ sub run(;$) {
 		stop_pid($pid, 1);
 
 		open STDERR, '>&', \*OLDERR;
+		my $error_log;
+		$error_log = $self->read_file('error.log')
+			if -e $self->{_testdir} . '/error.log';
 
-		die "Can't start nginx" . (($@) ? ": $@" : '');
+		my $stderr;
+		$stderr = $self->read_file('stderr')
+			if -e $self->{_testdir} . '/stderr';
+
+		die "Can't start nginx"
+			. (($@) ? ": $@" : '')
+			. (($error_log) ? "\n$error_log" : '')
+			. (($stderr) ? "\n$stderr" : '');
 	}
 
 	open STDERR, '>&', \*OLDERR;
@@ -826,8 +886,16 @@ EOF
 	my $resolver_started = eval {
 		$self->waitforfile("$d/dnsmasq.pid", $resolver_pid);
 	};
-	die "Can't start dnsmasq on port $port" . (($@) ? ": $@" : '')
-		if !$resolver_started || $@;
+
+	if (!$resolver_started || $@) {
+		my $dns_log;
+		$dns_log = $self->read_file('dns.log')
+			if -e "$d/dns.log";
+
+		die "Can't start dnsmasq on port $port"
+			. (($@) ? ": $@" : '')
+			. (($dns_log) ? "\n$dns_log" : '');
+	}
 }
 
 sub stop_resolver {

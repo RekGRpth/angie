@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Andrey Zelenkov
 # (C) Nginx, Inc.
 
@@ -144,7 +145,7 @@ $data .= chr(5);
 $data .= pack_node(32);
 
 $t->write_file('org.dat', $data);
-$t->try_run('no inet6 support')->plan(20);
+$t->plan(20)->run();
 
 ###############################################################################
 

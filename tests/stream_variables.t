@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+# (C) 2026 Web Server LLC
 # (C) Sergey Kandaurov
 # (C) Nginx, Inc.
 
@@ -25,7 +26,8 @@ use Test::Nginx::Stream qw/ stream dgram /;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/stream stream_return udp/);
+my $t = Test::Nginx->new()->has(qw/stream stream_return udp inet6/)
+	->plan(8);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -80,7 +82,7 @@ stream {
 
 EOF
 
-$t->try_run('no inet6 support')->plan(8);
+$t->run();
 
 ###############################################################################
 
