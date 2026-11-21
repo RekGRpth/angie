@@ -2488,13 +2488,13 @@ ngx_http_v2_state_window_update(ngx_http_v2_connection_t *h2c, u_char *pos,
         return ngx_http_v2_state_complete(h2c, pos, end);
     }
 
-    if (window > NGX_HTTP_V2_MAX_WINDOW - h2c->send_window) {
+    if (window > NGX_HTTP_V2_MAX_WINDOW - h2c->send_window - h2c->send_queued) {
         ngx_log_error(NGX_LOG_INFO, h2c->connection->log, 0,
                       "client violated connection flow control: "
                       "received WINDOW_UPDATE frame "
                       "with window increment %uz "
                       "not allowed for window %uz",
-                      window, h2c->send_window);
+                      window, h2c->send_window + h2c->send_queued);
 
         return ngx_http_v2_connection_error(h2c, NGX_HTTP_V2_FLOW_CTRL_ERROR);
     }
@@ -3114,6 +3114,8 @@ ngx_http_v2_create_stream(ngx_http_v2_connection_t *h2c)
     h2c->processing++;
 
     h2c->priority_limit += h2scf->concurrent_streams;
+
+    ngx_reusable_connection(h2c->connection, 0);
 
     if (h2c->connection->read->timer_set) {
         ngx_del_timer(h2c->connection->read);

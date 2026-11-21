@@ -7,6 +7,284 @@
 
 <changes ver="1.13.0" date="">
 
+<change type="security">
+<para lang="ru">
+при использовании директивы "try_files" со значениями, содержащими
+переменные, в "location" с директивой "alias", в некоторых конфигурациях
+могло произойти переполнение буфера, что позволяло атакующему повредить
+память рабочего процесса или вызвать его падение (CVE-2026-125283);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+when the "try_files" directive with values containing variables was used
+in a "location" with the "alias" directive, a buffer overflow might occur
+in certain configurations, allowing an attacker to corrupt the worker
+process memory or cause its crash (CVE-2026-125283);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+при использовании HTTP/2 обработка специально созданных сообщений клиента
+во время передачи ему ответа могла приводить к повреждению памяти рабочего
+процесса, его падению, а также потенциально могла иметь другие последствия
+(CVE-2026-123007);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+when HTTP/2 was used, processing of specially crafted messages from a client
+while a response was being sent to it might result in worker process memory
+corruption or a worker process crash, or might have potential other impact
+(CVE-2026-123007);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+при использовании HTTP/2, если обработка запроса требовала исходящего
+соединения (например, с проксируемым сервером), а свободных соединений
+(директива "worker_connections") не хватало, HTTP/2-соединение могло
+ошибочно закрываться, хотя запрос в нём ещё обрабатывался; в результате
+могло происходить повреждение памяти рабочего процесса или его падение
+(CVE-2026-123633);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+when HTTP/2 was used, if processing a request required an outgoing
+connection (for example, to a proxied server) and free connections (the
+"worker_connections" directive) were not enough, an HTTP/2 connection
+could be mistakenly closed while a request was still being processed in
+it; as a result, worker process memory corruption or a worker process
+crash could occur (CVE-2026-123633);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+при использовании HTTP/3, если обработка запроса требовала исходящего
+соединения (например, с проксируемым сервером), а свободных соединений
+(директива "worker_connections") не хватало, QUIC-соединение могло
+ошибочно закрываться, хотя запрос в нём ещё обрабатывался; в результате
+могло происходить повреждение памяти рабочего процесса или его падение
+(CVE-2026-121810);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+when HTTP/3 was used, if processing a request required an outgoing
+connection (for example, to a proxied server) and free connections (the
+"worker_connections" directive) were not enough, a QUIC connection could
+be mistakenly closed while a request was still being processed in it; as
+a result, worker process memory corruption or a worker process crash
+could occur (CVE-2026-121810);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+при использовании директивы "resolver" для разрешения имён проксируемых
+серверов во время обработки запроса, если то же имя одновременно
+разрешалось и в подзапросе, атакующий, способный инициировать разрешение
+имён, мог повредить память рабочего процесса или вызвать его падение;
+возможны и другие последствия (CVE-2026-123634);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+when the "resolver" directive was used to resolve proxied server names
+while processing a request, and the same name was simultaneously resolved
+in a subrequest, an attacker able to trigger name resolution might corrupt
+worker process memory or cause a worker process crash; the issue might also
+have potential other impact (CVE-2026-123634);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+в почтовом прокси-сервере завершение соединения или запись данных клиентом
+во время подключения к проксируемому серверу (директива "proxy on"),
+разрешения имени клиента либо ожидания ответа сервера аутентификации
+(директива "auth_http") могли приводить к повреждению памяти рабочего
+процесса или его падению (CVE-2026-113425);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+in the Mail proxy module, closing the connection or writing data by
+a client while the server was connecting to a proxied server (the
+"proxy on" directive), resolving a client name, or waiting for a response
+from the authentication server (the "auth_http" directive) could lead to
+worker process memory corruption or a worker process crash
+(CVE-2026-113425);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+в stream-модуле, если виртуальные серверы выбирались по SNI и проверка
+клиентских SSL-сертификатов (директивы "ssl_verify_client",
+"ssl_client_certificate" и "ssl_trusted_certificate") была настроена
+строже в выбранном по SNI сервере, чем в сервере по умолчанию, такая
+проверка могла выполняться с настройками сервера по умолчанию, что
+позволяло атакующему её обойти (CVE-2026-120967);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+in the stream module, if virtual servers were selected by SNI and client SSL
+certificate verification (the "ssl_verify_client",
+"ssl_client_certificate" and "ssl_trusted_certificate" directives) was
+configured more strictly in the server selected by SNI than in the default
+server, the verification could be performed using the configuration of the
+default server, allowing an attacker to bypass it (CVE-2026-120967);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+при использовании директивы "ssl_preread" некорректные сообщения
+ClientHello могли интерпретироваться иначе, чем в других реализациях TLS,
+что могло приводить к обходу ограничений безопасности, основанных на
+значениях переменных "$ssl_preread_server_name" и
+"$ssl_preread_alpn_protocols" (CVE-2026-123640);
+исправление портировано из nginx 1.31.9.
+</para>
+<para lang="en">
+when the "ssl_preread" directive was used, malformed ClientHello messages
+might be interpreted differently than in other TLS implementations, which
+might result in bypassing security restrictions based on the
+"$ssl_preread_server_name" and "$ssl_preread_alpn_protocols" variables
+(CVE-2026-123640);
+the fix was ported from nginx 1.31.9.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+загрузчик кэша не работал для зон, восстановленных из файла состояния,
+если ранее тот был сохранен до окончания загрузки кэша.
+</para>
+<para lang="en">
+cache loader did not work for zones restored from a state file,
+if the file was saved before the cache was finally loaded.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при закрытии SSL-соединений с kernel TLS (Linux, OpenSSL 3.2.0 и новее)
+в "error_log" могли записываться ложные сообщения вида
+"[alert] recv() failed (5: Input/output error)";
+исправление портировано из nginx 1.31.8.
+</para>
+<para lang="en">
+when closing SSL connections with kernel TLS (Linux, OpenSSL 3.2.0 and later),
+spurious messages such as "[alert] recv() failed (5: Input/output error)"
+could be logged to "error_log";
+the fix was ported from nginx 1.31.8.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+если для экспорта метрик использовался штатный файл "prometheus_all.conf",
+метрики "angie_http_acme_clients_state" и "angie_http_acme_certs_state"
+отсутствовали в выдаче, так как шаблоны преобразования значений этих
+метрик были перепутаны местами.
+</para>
+<para lang="en">
+if the bundled "prometheus_all.conf" file was used to export metrics, the
+"angie_http_acme_clients_state" and "angie_http_acme_certs_state" metrics
+were missing from the output, because the value mapping templates of
+these metrics were swapped with each other.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при проксировании по HTTP/3 в ответе клиенту могли отсутствовать уже
+обработанные заголовки от проксируемого сервера, если фрейм HEADERS был
+получен не за одно чтение.
+</para>
+<para lang="en">
+when proxying over HTTP/3, the client response might lack previously parsed
+upstream headers if a HEADERS frame spanned multiple reads.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+проксируемое по HTTP/3 соединение могло сохраняться в keepalive-кэш даже
+после получения от проксируемого сервера сигнала на закрытие (GOAWAY),
+что далее, при повторном использовании, приводило к завершению запроса
+с ошибкой; теперь такое соединение закрывается и не используется повторно.
+</para>
+<para lang="en">
+an HTTP/3 proxied connection could remain in the keepalive cache even
+after receiving a close signal (GOAWAY) from the proxied server,
+which later led to request failure when the connection was reused;
+now such a connection is closed and not reused.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при проксировании по HTTP/3, если проксируемый сервер не отправлял
+TLS-тикеты сессии (например, при использовании LibreSSL), запросы к нему
+могли зависать и завершаться по таймауту.
+</para>
+<para lang="en">
+when proxying over HTTP/3, if the proxied server did not send TLS session
+tickets (for example, when using LibreSSL), requests to it could hang and
+time out.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+HTTP/3-прокси мог вернуть ошибку 500 при повторном использовании соединения
+с проксируемым сервером, лимит потоков которого был исчерпан, вместо создания
+нового upstream-соединения.
+</para>
+<para lang="en">
+HTTP/3 proxy could return 500 when reusing a cached upstream connection whose
+stream limit was exhausted, instead of establishing a new upstream connection.
+</para>
+</change>
+
+<change type="security">
+<para lang="ru">
+при проксировании по HTTP/3, при вычислении строковых выражений с
+безымянными переменными-захватами ($1, $2 и т.д.) в директивах
+"proxy_set_header" и "proxy_set_body" вместе с переменной директивы "map",
+значение которой определяется регулярным выражением, могло произойти
+повреждение памяти рабочего процесса или его падение.
+</para>
+<para lang="en">
+when proxying over HTTP/3, when evaluating string expressions with
+unnamed capture variables ($1, $2, etc.) in the "proxy_set_header"
+and "proxy_set_body" directives together with a "map" directive variable
+whose value is determined by a regular expression, worker process
+memory corruption or a worker process crash could occur.
+</para>
+</change>
+
+<change type="bugfix">
+<para lang="ru">
+при проксировании по HTTP/3 keepalive-соединение с upstream-сервером
+могло обслужить не более "proxy_http3_max_concurrent_streams" запросов
+за время жизни и далее не переиспользовалось.
+</para>
+<para lang="en">
+when proxying over HTTP/3, an upstream keepalive connection could
+serve at most "proxy_http3_max_concurrent_streams" requests during
+its lifetime and was not reused after that.
+</para>
+</change>
+
 <change type="feature">
 <para lang="ru">
 возможность задавать в директиве "acme_dns_ttl" значения времени,

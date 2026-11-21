@@ -52,7 +52,6 @@ static void ngx_quic_copy_chain_data(ngx_chain_t *dst_chain,
 static ngx_int_t ngx_quic_stream_flush(ngx_quic_stream_t *qs);
 static void ngx_quic_stream_cleanup_handler(void *data);
 static ngx_int_t ngx_quic_close_stream(ngx_quic_stream_t *qs);
-static ngx_int_t ngx_quic_can_shutdown(ngx_connection_t *c);
 static ngx_int_t ngx_quic_control_flow(ngx_quic_stream_t *qs, uint64_t last);
 static ngx_int_t ngx_quic_update_flow(ngx_quic_stream_t *qs, uint64_t last);
 static ngx_int_t ngx_quic_update_max_stream_data(ngx_quic_stream_t *qs);
@@ -70,19 +69,20 @@ ngx_quic_open_stream(ngx_connection_t *c, ngx_uint_t bidi)
     ngx_quic_stream_t       *qs;
     ngx_quic_connection_t   *qc;
     ngx_quic_stream_ctl_t   *sctl;
-    ngx_quic_stream_peer_t  *peer;
+    ngx_quic_stream_peer_t  *self;
 
     pc = c->quic ? c->quic->parent : c;
     qc = ngx_quic_get_connection(pc);
 
-    if (qc->closing) {
+    if (qc->closing || (qc->shutdown && bidi)) {
         ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
-                       "quic open stream failed: already closing");
+                       "quic open stream failed: already closing "
+                       "or shutting down");
         return NULL;
     }
 
-    peer = qc->client ? &qc->streams.client : &qc->streams.server;
-    sctl = bidi ? &peer->bidi : &peer->uni;
+    self = qc->client ? &qc->streams.client : &qc->streams.server;
+    sctl = bidi ? &self->bidi : &self->uni;
 
     if (sctl->count >= sctl->max) {
         ngx_log_debug3(NGX_LOG_DEBUG_EVENT, c->log, 0,
@@ -417,7 +417,7 @@ ngx_quic_get_stream(ngx_connection_t *c, uint64_t id)
     ngx_quic_stream_t       *qs;
     ngx_quic_connection_t   *qc;
     ngx_quic_stream_ctl_t   *sctl;
-    ngx_quic_stream_peer_t  *peer;
+    ngx_quic_stream_peer_t  *self, *peer;
 
     qc = ngx_quic_get_connection(c);
 
@@ -437,9 +437,9 @@ ngx_quic_get_stream(ngx_connection_t *c, uint64_t id)
     if (ngx_quic_out_stream(qc, id)) {
         /* stream is initiated by us, but peer is trying to use it */
 
-        peer = qc->client ? &qc->streams.client : &qc->streams.server;
+        self = qc->client ? &qc->streams.client : &qc->streams.server;
 
-        sctl = ngx_quic_uni_stream(id) ? &peer->uni : &peer->bidi;
+        sctl = ngx_quic_uni_stream(id) ? &self->uni : &self->bidi;
 
         if ((id >> 2) < sctl->count) {
             return NGX_QUIC_STREAM_GONE;
@@ -754,12 +754,15 @@ ngx_quic_create_stream(ngx_connection_t *c, uint64_t id)
         addr_text.data = NULL;
     }
 
+    ngx_rbtree_insert(&qc->streams.tree, &qs->node);
+
     reusable = c->reusable;
     ngx_reusable_connection(c, 0);
 
     sc = ngx_get_connection(c->fd, log);
     if (sc == NULL) {
         ngx_destroy_pool(pool);
+        ngx_rbtree_delete(&qc->streams.tree, &qs->node);
         ngx_queue_insert_tail(&qc->streams.free, &qs->queue);
         ngx_reusable_connection(c, reusable);
         return NULL;
@@ -803,6 +806,7 @@ ngx_quic_create_stream(ngx_connection_t *c, uint64_t id)
     if (cln == NULL) {
         ngx_close_connection(sc);
         ngx_destroy_pool(pool);
+        ngx_rbtree_delete(&qc->streams.tree, &qs->node);
         ngx_queue_insert_tail(&qc->streams.free, &qs->queue);
         ngx_reusable_connection(c, reusable);
         return NULL;
@@ -810,8 +814,6 @@ ngx_quic_create_stream(ngx_connection_t *c, uint64_t id)
 
     cln->handler = ngx_quic_stream_cleanup_handler;
     cln->data = sc;
-
-    ngx_rbtree_insert(&qc->streams.tree, &qs->node);
 
     ngx_log_debug2(NGX_LOG_DEBUG_EVENT, sc->log, 0,
                    "quic stream id:0x%xL created in connection *%uA", id,
@@ -1457,7 +1459,7 @@ ngx_quic_close_stream(ngx_quic_stream_t *qs)
 }
 
 
-static ngx_int_t
+ngx_int_t
 ngx_quic_can_shutdown(ngx_connection_t *c)
 {
     ngx_rbtree_t           *tree;
@@ -1826,12 +1828,15 @@ ngx_int_t
 ngx_quic_handle_max_streams_frame(ngx_connection_t *c,
     ngx_quic_header_t *pkt, ngx_quic_max_streams_frame_t *f)
 {
-    ngx_quic_stream_ctl_t  *sctl;
-    ngx_quic_connection_t  *qc;
+    ngx_quic_stream_ctl_t   *sctl;
+    ngx_quic_connection_t   *qc;
+    ngx_quic_stream_peer_t  *self;
 
     qc = ngx_quic_get_connection(c);
 
-    sctl = f->bidi ? &qc->streams.server.bidi : &qc->streams.server.uni;
+    self = qc->client ? &qc->streams.client : &qc->streams.server;
+
+    sctl = f->bidi ? &self->bidi : &self->uni;
 
     if (sctl->max < f->limit) {
         sctl->max = f->limit;
